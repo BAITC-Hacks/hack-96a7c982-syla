@@ -37,7 +37,7 @@ function renderPilotHistory() {
   const decisions = {selected: 'Включена в план', rejected: 'Отклонена', not_selected: 'Не вошла в план'};
   byId('pilot-history-rows').innerHTML = shown.length ? shown.map(pilot => `
     <tr>
-      <th scope="row"><small>#${String(pilot.sequence).padStart(2, '0')} · ${pilot.round > 1 ? `повтор ${pilot.round}` : 'первый пилот'} · ${escapeHtml(pilot.channel.toUpperCase())}</small><strong>${escapeHtml(pilot.source)} → ${escapeHtml(pilot.target)}</strong><span>ARPU ${escapeHtml(pilot.segment)}</span></th>
+      <th scope="row"><small>#${String(pilot.sequence).padStart(2, '0')} · ${pilot.round > 1 ? `повтор ${pilot.round}` : 'первый пилот'} · ${escapeHtml(channelName(pilot.channel))}</small><strong>${tariffLabel(pilot.source, historyRun.source === 'demo')} → ${tariffLabel(pilot.target, historyRun.source === 'demo')}</strong><span>ARPU ${escapeHtml(pilot.segment)}</span></th>
       <td><strong>${percent(pilot.before_pct)}</strong><small>σ ${percent(pilot.std_before_pct)}</small></td>
       <td class="observed-cell"><strong>${percent(pilot.observed_pct)}</strong><small>SE ${percent(pilot.observation_se_pct)}</small></td>
       <td><strong>${percent(pilot.after_pct)}</strong><small>σ ${percent(pilot.std_after_pct)}</small></td>
@@ -51,7 +51,7 @@ async function openHistoryRun(id, request) {
   const run = await responseJson(await fetch(`/api/runs?id=${encodeURIComponent(id)}`));
   if (request !== historyRequest) return;
   historyRun = run;
-  byId('run-meta').textContent = `${dateTime.format(new Date(run.created_at))} · ${run.source === 'demo' ? 'Данные кейса' : 'Загруженная база'} · ${number(run.customers)} абонентов · сценарий ${run.seed} · версия агента ${run.model_version}`;
+  byId('run-meta').textContent = `${dateTime.format(new Date(run.created_at))} · ${run.source === 'demo' ? 'Данные кейса · названия тарифов условные, ID в подсказках' : 'Загруженная база'} · ${number(run.customers)} абонентов · сценарий ${run.seed} · версия агента ${run.model_version}`;
   byId('export-pilots').href = `/api/pilots.csv?id=${encodeURIComponent(run.id)}`;
   byId('pilot-filter').value = 'all';
   renderPilotHistory();

@@ -6,6 +6,8 @@ let activeIndex = 0;
 let schemas = {};
 let validatedDataset = null;
 let loadingPlan = false;
+let inspectorMode = 'decision';
+const creativeVariants = new Map();
 
 function number(value) { return format.format(Math.round(value)); }
 function signed(value) { return `${value >= 0 ? '+' : '−'}${number(Math.abs(value))}`; }
@@ -23,6 +25,26 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+}
+
+// Presentation-only aliases for the synthetic case; never change IDs in the plan.
+const DEMO_TARIFF_NAMES = Object.freeze({
+  tariff_1: 'Старт', tariff_2: 'Лёгкий', tariff_3: 'Баланс',
+  tariff_4: 'Онлайн Старт', tariff_5: 'Комфорт', tariff_6: 'Мой ритм',
+  tariff_7: 'На связи', tariff_8: 'Онлайн', tariff_9: 'Онлайн Плюс',
+  tariff_10: 'Ритм', tariff_11: 'Ритм Плюс', tariff_12: 'Горизонт',
+  tariff_13: 'Связь Лайт', tariff_14: 'Диалог', tariff_15: 'Связь Плюс',
+  tariff_16: 'Движение', tariff_17: 'Каждый день', tariff_18: 'Простор',
+  tariff_19: 'Контакт', tariff_20: 'Драйв', tariff_21: 'Масштаб',
+});
+function tariffName(id, isDemo = report?.dataset?.kind === 'demo') {
+  return isDemo && Object.hasOwn(DEMO_TARIFF_NAMES, id) ? DEMO_TARIFF_NAMES[id] : String(id);
+}
+function tariffLabel(id, isDemo = report?.dataset?.kind === 'demo') {
+  return `<span title="ID: ${escapeHtml(id)}">${escapeHtml(tariffName(id, isDemo))}</span>`;
+}
+function channelName(channel) {
+  return ({sms: 'SMS', push: 'Push', digital_ads: 'Цифровая реклама', call: 'Звонок'})[channel] || channel;
 }
 
 function metric(label, used, limit, foot) {
@@ -44,6 +66,7 @@ function renderOverview() {
     : 'Демо на данных кейса · пилоты смоделированы, рассылки не отправляются';
   const sourceName = uploaded ? report.dataset.files.find(file => file.kind === 'profile').name : report.dataset.label;
   byId('source-label').textContent = `${sourceName} · ${number(report.dataset.customers)} ${plural(report.dataset.customers, 'абонент', 'абонента', 'абонентов')} · ${number(report.dataset.tariffs)} ${plural(report.dataset.tariffs, 'тариф', 'тарифа', 'тарифов')}`;
+  byId('tariff-name-note').hidden = uploaded;
   byId('download-button').innerHTML = `Скачать ${uploaded ? 'план CSV' : 'submission.csv'} <span aria-hidden="true">↓</span>`;
   byId('seed-label').textContent = `SEED ${report.seed}`;
   byId('plan-heading').textContent = summary.campaigns
@@ -62,10 +85,93 @@ function renderOverview() {
 function renderQuickNav() {
   byId('quick-campaign-list').innerHTML = report.campaigns.map((campaign, index) => `
     <button class="quick-campaign ${index === activeIndex ? 'active' : ''}" type="button" data-index="${index}" aria-pressed="${index === activeIndex}">
-      <span>${String(index + 1).padStart(2, '0')}</span> ${escapeHtml(campaign.source)} [${escapeHtml(campaign.segment)}] → ${escapeHtml(campaign.target)}
+      <span>${String(index + 1).padStart(2, '0')}</span> ${tariffLabel(campaign.source)} [${escapeHtml(campaign.segment)}] → ${tariffLabel(campaign.target)}
     </button>`).join('');
   byId('quick-campaign-list').querySelectorAll('button').forEach((button) => {
     button.addEventListener('click', () => { activeIndex = Number(button.dataset.index); renderQuickNav(); renderPortfolio(); renderInspector(); });
+  });
+}
+
+function renderStory() {
+  const comparison = report.comparison;
+  const funnel = report.funnel;
+  if (!comparison || !funnel) { byId('campaign-story').innerHTML = ''; return; }
+  const negative = comparison.net_arpu_gain < 0;
+  const outcomes = [
+    {key: 'selected_piloted', label: 'В план после пилотов', style: 'selected'},
+    {key: 'rejected', label: 'Отклонены по риску убытка', style: 'rejected'},
+    {key: 'not_selected_piloted', label: 'Не выбраны в портфель', style: 'remaining'},
+  ];
+  byId('campaign-story').innerHTML = `<article class="comparison-card" aria-labelledby="comparison-heading">
+      <p class="eyebrow">ОДНА БАЗА · ДВА СЦЕНАРИЯ</p><h3 id="comparison-heading">Что меняет план</h3>
+      <dl class="comparison-ledger"><div><dt>Без кампаний<small>сумма прогнозного ARPU</small></dt><dd>${number(comparison.baseline_total_arpu)} <small>у.е.</small></dd></div>
+      <div class="comparison-after"><dt>С планом<small>baseline + чистый эффект</small></dt><dd>${number(comparison.total_arpu_after)} <small>у.е.</small></dd></div></dl>
+      <div class="comparison-delta ${negative ? 'is-negative' : ''}"><strong>${signed(comparison.net_arpu_gain)} у.е.</strong><span>${comparison.growth_pct === null ? 'Доля не рассчитывается при нулевом baseline' : `${comparison.growth_pct >= 0 ? '+' : '−'}${percent(Math.abs(comparison.growth_pct))} к baseline`}</span></div>
+      <p class="footnote">Симуляция с учётом пилотов, затрат на связь и пересечений. Это не сравнение с работой маркетолога и не измеренная прибыль.</p>
+    </article>
+    <article class="funnel-card" aria-labelledby="funnel-heading"><p class="eyebrow">РАЗВЕДКА → РЕШЕНИЕ</p><h3 id="funnel-heading">Куда пришли гипотезы</h3>
+      <div class="funnel-total"><strong>${number(funnel.tested)}</strong><span>проверено пилотами<small>Повторы не увеличивают число гипотез</small></span></div>
+      <div class="funnel-bar" aria-hidden="true">${outcomes.map(item => `<span class="funnel-${item.style}" style="width:${funnel.tested ? 100 * funnel[item.key] / funnel.tested : 0}%"></span>`).join('')}</div>
+      <ul class="funnel-outcomes">${outcomes.map(item => `<li><i class="funnel-${item.style}" aria-hidden="true"></i><span>${item.label}</span><strong>${number(funnel[item.key])}</strong></li>`).join('')}</ul>
+      <div class="funnel-final"><span>В финальном плане <strong>${number(funnel.final_campaigns)}</strong></span><small>${number(funnel.selected_piloted)} после пилотов + ${number(funnel.selected_unpiloted)} без отдельного пилота</small></div>
+      <p class="footnote">Не выбрана ≠ убыточна: учитываются лимиты и другие варианты. В пуле без пилота: ${number(funnel.unpiloted_pool)} ${plural(funnel.unpiloted_pool, 'гипотеза', 'гипотезы', 'гипотез')}; в плане из них — ${number(funnel.selected_unpiloted)}${funnel.selected_unpiloted ? '; перед запуском нужна ручная проверка' : ''}.</p>
+    </article>`;
+}
+
+function creativePanel(campaign) {
+  const creative = campaign.creative;
+  if (!creative?.variants?.length) return `<div class="empty-state">Черновик недоступен. ${escapeHtml(creative?.warnings?.join(' ') || 'Проверьте данные тарифа и пересчитайте план.')}</div>`;
+  const index = (creativeVariants.get(campaign.name) || 0) % creative.variants.length;
+  const variant = {...creative.variants[index]};
+  if (report.dataset.kind === 'demo') {
+    for (const field of ['headline', 'body', 'copy_text']) {
+      variant[field] = variant[field].split(campaign.target).join(`«${tariffName(campaign.target)}»`);
+    }
+  }
+  const channel = ({sms: 'SMS', push: 'Push', digital_ads: 'Цифровая реклама', call: 'Сценарий звонка'})[campaign.channel] || campaign.channel;
+  return `<div class="creative-notice"><strong>Черновик · проверить перед использованием</strong><span>Шаблон из справочника, без LLM. Данные кейса синтетические; это не действующее предложение Beeline. Ничего не отправляется абонентам.</span></div>
+    <div class="creative-toolbar"><span>${escapeHtml(channel)} · вариант ${index + 1} из ${creative.variants.length}</span><button id="next-creative" type="button">Другой вариант ↻</button></div>
+    <div class="creative-preview ${campaign.channel === 'digital_ads' ? 'creative-ad' : ''}"><span class="creative-preview-label">${escapeHtml(variant.label)}</span>${variant.headline && campaign.channel !== 'sms' ? `<h3>${escapeHtml(variant.headline)}</h3>` : ''}<p>${escapeHtml(variant.body)}</p></div>
+    <div class="creative-copy-row"><button id="copy-creative" class="button button-primary" type="button">Скопировать текст</button><small>${number([...variant.copy_text].length)} символов${campaign.channel === 'sms' ? ' · число SMS зависит от кодировки и лимитов канала' : ''}</small></div>
+    <p id="creative-copy-status" class="footnote" role="status" aria-live="polite"></p>
+    <div id="creative-copy-fallback" hidden><label for="creative-copy-text">Текст для ручного копирования</label><textarea id="creative-copy-text" rows="5" readonly>${escapeHtml(variant.copy_text)}</textarea></div>
+    <div class="creative-facts"><h4>Основание для текста</h4><p>Тариф ${tariffLabel(campaign.target)} (ID: ${escapeHtml(campaign.target)}): цена и пакет интернета из справочника. ${report.dataset.kind === 'demo' ? 'Название демонстрационное, не официальное. ' : ''}Разница абонплат не равна изменению полного счёта клиента. Оценка ARPU оператора не используется как обещание клиенту.</p></div>
+    ${campaign.pilot_count ? '' : '<p class="creative-caution">Эта кампания не проверена отдельным пилотом. Наличие текста не подтверждает её эффективность.</p>'}
+    ${creative.warnings?.length ? `<ul class="creative-warnings">${creative.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}`;
+}
+
+function bindInspector(campaign) {
+  document.querySelectorAll('[data-inspector-mode]').forEach(button => {
+    button.addEventListener('click', () => {
+      inspectorMode = button.dataset.inspectorMode;
+      renderInspector();
+      byId(`inspector-${inspectorMode}-button`).focus();
+    });
+  });
+  byId('next-creative')?.addEventListener('click', () => {
+    const variants = campaign.creative.variants;
+    creativeVariants.set(campaign.name, ((creativeVariants.get(campaign.name) || 0) + 1) % variants.length);
+    renderInspector();
+    byId('next-creative').focus();
+  });
+  byId('copy-creative')?.addEventListener('click', async () => {
+    const button = byId('copy-creative');
+    const status = byId('creative-copy-status');
+    const fallback = byId('creative-copy-fallback');
+    const textarea = byId('creative-copy-text');
+    button.disabled = true;
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      status.textContent = 'Текст скопирован. Проверьте условия тарифа перед использованием.';
+    } catch {
+      if (fallback.isConnected) {
+        fallback.hidden = false;
+        textarea.focus(); textarea.select();
+        status.textContent = 'Автокопирование недоступно. Текст выделен — нажмите Ctrl+C или скопируйте вручную.';
+      }
+    } finally {
+      button.disabled = false;
+    }
   });
 }
 
@@ -86,8 +192,9 @@ function renderPortfolio() {
     <button class="campaign-item ${index === activeIndex ? 'active' : ''}" type="button" data-index="${index}" aria-pressed="${index === activeIndex}">
       <span class="campaign-rank">${String(index + 1).padStart(2, '0')}</span>
       <span class="campaign-main">
-        <span class="campaign-route">${escapeHtml(campaign.source)} <b>[${escapeHtml(campaign.segment)}] →</b> ${escapeHtml(campaign.target)}</span>
-        <span class="campaign-meta"><span class="channel-pill">${escapeHtml(campaign.channel.toUpperCase())}</span> ${number(campaign.contacts)} ${plural(campaign.contacts, 'контакт', 'контакта', 'контактов')} · ${campaign.pilot_count ? `${campaign.pilot_count} ${plural(campaign.pilot_count, 'пилот', 'пилота', 'пилотов')}` : 'без пилота'}</span>
+        <span class="campaign-route">${tariffLabel(campaign.source)} <b>[${escapeHtml(campaign.segment)}] →</b> ${tariffLabel(campaign.target)}</span>
+        <span class="campaign-meta"><span class="channel-pill">${escapeHtml(channelName(campaign.channel))}</span> ${number(campaign.contacts)} ${plural(campaign.contacts, 'контакт', 'контакта', 'контактов')} · ${campaign.pilot_count ? `${campaign.pilot_count} ${plural(campaign.pilot_count, 'пилот', 'пилота', 'пилотов')}` : 'без пилота'}</span>
+        <span class="campaign-meta">Новый тариф: ${new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 2}).format(campaign.tariff_context.target_price)} у.е./мес. · ${new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 6}).format(campaign.tariff_context.target_data_gb)} ГБ</span>
       </span>
       <span class="campaign-gain">${signed(campaign.expected_net)}</span>
     </button>`).join('');
@@ -100,7 +207,7 @@ function renderPortfolio() {
     : 'В этом прогоне пилоты не выявили уверенно отрицательных кандидатов.';
   byId('rejected-list').innerHTML = report.rejected.length
     ? report.rejected.map((item) => `<div class="rejected-item">
-        <div class="rejected-route">${escapeHtml(item.source)} [${escapeHtml(item.segment)}] → ${escapeHtml(item.target)}</div>
+        <div class="rejected-route">${tariffLabel(item.source)} [${escapeHtml(item.segment)}] → ${tariffLabel(item.target)}</div>
         <div class="rejected-reason">Пилот: ${item.pilots.length ? percent(item.pilots[0].observed_lift_pct) : '—'} · верхняя осторожная оценка ${percent(item.posterior_lift_pct + item.posterior_std_pct)}. Повторный пилот не проводился.</div>
       </div>`).join('')
     : '<div class="rejected-item rejected-reason">Другие гипотезы могли не войти в план из-за лимита кампаний или более слабой осторожной оценки.</div>';
@@ -144,10 +251,16 @@ function renderInspector() {
   byId('inspector').innerHTML = `
     <div class="selection-head">
       <div><p class="eyebrow">ВЫБРАННАЯ КАМПАНИЯ</p>
-        <h3 class="selection-route">${escapeHtml(campaign.source)} <span class="arrow">→</span> ${escapeHtml(campaign.target)}</h3>
-        <div class="selection-tags"><span>ARPU ${escapeHtml(campaign.segment)}</span><span>${escapeHtml(campaign.channel.toUpperCase())}</span><span>${campaign.pilot_count} ${plural(campaign.pilot_count, 'пилот', 'пилота', 'пилотов')}</span></div>
+        <h3 class="selection-route">${tariffLabel(campaign.source)} <span class="arrow">→</span> ${tariffLabel(campaign.target)}</h3>
+        <div class="selection-tags"><span>ARPU ${escapeHtml(campaign.segment)}</span><span>${escapeHtml(channelName(campaign.channel))}</span><span>${campaign.pilot_count} ${plural(campaign.pilot_count, 'пилот', 'пилота', 'пилотов')}</span></div>
       </div><span class="selection-number">#${String(campaign.rank).padStart(2, '0')}</span>
     </div>
+    <div class="inspector-modes" role="group" aria-label="Содержание карточки кампании">
+      <button id="inspector-decision-button" type="button" data-inspector-mode="decision" aria-pressed="${inspectorMode === 'decision'}" aria-controls="decision-content">Почему выбрана</button>
+      <button id="inspector-creative-button" type="button" data-inspector-mode="creative" aria-pressed="${inspectorMode === 'creative'}" aria-controls="creative-content">Текст кампании</button>
+    </div>
+    <div id="creative-content" ${inspectorMode === 'creative' ? '' : 'hidden'}>${creativePanel(campaign)}</div>
+    <div id="decision-content" ${inspectorMode === 'decision' ? '' : 'hidden'}>
     ${campaign.pilot_count ? '' : '<div class="review-alert"><strong>Требует ручной проверки</strong><span>Эта малая группа вошла в план без отдельного пилота. Оценка основана на исторических переходах другой аудитории; перед реальной рассылкой нужен контрольный тест.</span></div>'}
     <div class="decision-flow" aria-label="Путь решения">
       <div class="flow-step"><span class="flow-index">01 / ДО ПИЛОТА</span><strong>${percent(campaign.prior_lift_pct)}</strong><small>историческая оценка · ${selectedChannel}</small></div>
@@ -178,7 +291,8 @@ function renderInspector() {
     <div class="section-title"><h3>Симуляция пилотов</h3><span>ШУМ ∝ 1 / √N</span></div>
     <div class="pilot-list">${pilotHtml}</div>
     <div class="explanation"><h3>${campaign.pilot_count ? 'Почему запускать' : 'Почему агент включил'}</h3><p>${explanation}</p></div>
-    <div class="guardrail-note"><strong>Защита от ложного апсейла</strong><span>Считаем чистый ARPU после стоимости канала, учитываем лимиты и не выбираем две кампании на одну группу. Истинный причинный эффект без контрольной группы здесь не доказан.</span></div>`;
+    <div class="guardrail-note"><strong>Защита от ложного апсейла</strong><span>Считаем чистый ARPU после стоимости канала, учитываем лимиты и не выбираем две кампании на одну группу. Истинный причинный эффект без контрольной группы здесь не доказан.</span></div></div>`;
+  bindInspector(campaign);
 }
 
 function showView(view) {
@@ -217,8 +331,9 @@ async function loadPlan(seed, datasetId = report?.dataset.id || 'demo') {
     const response = await fetch(`/api/plan?seed=${encodeURIComponent(seed)}&dataset=${encodeURIComponent(datasetId)}`);
     report = await responseJson(response);
     activeIndex = 0;
+    creativeVariants.clear();
     byId('seed-input').value = report.seed;
-    renderOverview(); renderResources(); renderQuickNav(); renderPortfolio(); renderInspector();
+    renderOverview(); renderStory(); renderResources(); renderQuickNav(); renderPortfolio(); renderInspector();
     byId('plan-tab').disabled = false;
     showView('plan');
     window.scrollTo({top: 0, behavior: 'instant'});

@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 import pandas as pd
 
 from agent import PILOT_STD_PER_CUSTOMER, PILOTED_RISK_PENALTY, PRIOR_STD, _candidates, _explore, _historical_priors, _plan, _posterior
+from campaign_creatives import generate_creatives
 from dashboard_data import MAX_UPLOAD_BYTES, SCHEMAS, UPLOADS, DatasetError, demo_dataset, validate_upload
 from environment import make_environment
 from make_submission import CAMPAIGN_COLUMNS
@@ -44,6 +45,40 @@ CAP_LABELS = {
     "capped_at_reach_budget": "Остаток общего лимита контактов",
     "capped_at_money_budget": "Остаток бюджета платного канала",
 }
+
+
+def campaign_comparison(score):
+    """Compare the no-campaign baseline with the scorer's communication-net result."""
+    baseline = float(score["baseline_total_arpu"])
+    net = float(score["net_arpu_gain"])
+    return {
+        "baseline_total_arpu": baseline,
+        "net_arpu_gain": net,
+        "total_arpu_after": float(score["total_arpu_after"]),
+        "growth_pct": 100 * net / baseline if baseline else None,
+    }
+
+
+def decision_funnel(candidates, final):
+    """Count distinct hypotheses, not pilot rounds or unselected-as-rejected groups."""
+    def key(row):
+        return row["filter_current_tariff"], row["filter_arpu_segment"], row["target_tariff"]
+
+    pool = {key(row) for row in candidates}
+    tested = {key(row) for row in candidates if row.get("pilot_count", 0) > 0}
+    selected = {key(row) for row in final}
+    selected_piloted = tested & selected
+    # Selected wins defensively if diagnostics contain a contradictory flag.
+    rejected = {key(row) for row in candidates if row.get("is_rejected")} & (tested - selected)
+    return {
+        "tested": len(tested),
+        "rejected": len(rejected),
+        "selected_piloted": len(selected_piloted),
+        "not_selected_piloted": len(tested - selected_piloted - rejected),
+        "selected_unpiloted": len(selected - tested),
+        "final_campaigns": len(selected),
+        "unpiloted_pool": len(pool - tested),
+    }
 
 
 def resource_breakdown(details, pilot_count):
@@ -93,6 +128,13 @@ def aggregate_report(report):
             "unique_customers", "rejected", "potential_sms_cost_avoided",
         )),
         "resources": report["resources"],
+        "comparison": pick(report["comparison"], (
+            "baseline_total_arpu", "net_arpu_gain", "total_arpu_after", "growth_pct",
+        )),
+        "funnel": pick(report["funnel"], (
+            "tested", "rejected", "selected_piloted", "not_selected_piloted",
+            "selected_unpiloted", "final_campaigns", "unpiloted_pool",
+        )),
         "campaigns": [pick(row, campaign_fields) for row in report["campaigns"]],
         "pilots": [pick(row, (
             "sequence", "source", "segment", "target", "channel", "round", "n", "cost",
@@ -119,6 +161,9 @@ def markdown_report(report):
         return f"{value:,.0f}".replace(",", " ")
 
     summary = report["summary"]
+    comparison, funnel = report["comparison"], report["funnel"]
+    growth = (f"{comparison['growth_pct']:+.2f}%" if comparison["growth_pct"] is not None
+              else "не определён: нулевой baseline")
     lines = [
         "# Beeline Tariff Copilot — отчёт по плану", "", "> " + report["notice"], "",
         f"Сценарий: {report['seed']} · версия модели: {report['model_version']} · provenance: simulation",
@@ -128,6 +173,19 @@ def markdown_report(report):
         f"- Кампаний: {summary['campaigns']} / {report['limits']['campaigns']}",
         f"- Контактов: {amount(summary['contacts'])} / {amount(report['limits']['contacts'])}",
         f"- Расходы: {amount(summary['budget_used'])} / {amount(report['limits']['budget'])} у.е.",
+        "", "## Без кампаний / с планом", "",
+        f"- Baseline без кампаний: {amount(comparison['baseline_total_arpu'])} у.е.",
+        f"- С планом, после затрат на коммуникацию: {amount(comparison['total_arpu_after'])} у.е.",
+        f"- Прирост: {amount(comparison['net_arpu_gain'])} у.е. · {growth}",
+        "Это локальная симуляция прироста ARPU, не прибыль компании и не сравнение с работой маркетолога.",
+        "", "## Воронка решений", "",
+        f"- Проверено отдельных гипотез: {funnel['tested']} (повторные пилоты не увеличивают это число)",
+        f"- Отклонено по критерию риска: {funnel['rejected']}",
+        f"- Вошли в план после пилота: {funnel['selected_piloted']}",
+        f"- Не выбраны после пилота: {funnel['not_selected_piloted']} (это не доказанный убыток)",
+        f"- Добавлены без пилота: {funnel['selected_unpiloted']}",
+        f"- Всего в финальном плане: {funnel['final_campaigns']}",
+        f"- Кандидатов без пилота в исходном пуле: {funnel['unpiloted_pool']}",
         "", "## Ресурсы", "", "| Этап | Контакты | Расходы, у.е. |", "|---|---:|---:|",
     ]
     for key, title in (("pilots", "Пилоты"), ("final", "Финальные кампании"), ("total", "Всего")):
@@ -291,6 +349,7 @@ def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
             "capped": bool(detail["capped_at_campaign_limit"] or detail["capped_at_reach_budget"] or detail["capped_at_money_budget"]),
             "cap_reasons": [label for flag, label in CAP_LABELS.items() if detail[flag]],
         })
+        rows[-1]["creative"] = generate_creatives(key[2], campaign["channel"], rows[-1]["tariff_context"])
 
     selected = {row["name"] for row in rows}
     rejected = []
@@ -343,6 +402,8 @@ def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
         "rejected": rejected,
         "submission": final,
         "resources": resource_breakdown(score["campaigns_detail"], len(pilots)),
+        "comparison": campaign_comparison(score),
+        "funnel": decision_funnel(candidates, final),
     }
     snapshot = aggregate_report(report)
     report["exports"] = {"json": snapshot, "markdown": markdown_report(snapshot)}
