@@ -1,0 +1,25 @@
+{
+  "is_demo": true,
+  "seed": 42,
+  "generated_at": "2026-09-23T10:00:00Z",
+  "score": {"net_arpu_gain": 148600, "gross_arpu_lift": 205800, "total_cost": 57200, "roi": 3.5979, "total_contacts": 14200},
+  "exploration": {"pilots_executed": 8, "pilot_contacts": 1200, "pilot_cost": 4800},
+  "campaigns": [
+    {"campaign_name":"MID / tariff_4 → tariff_8","filter_current_tariff":"tariff_4","filter_arpu_segment":"MID","target_tariff":"tariff_8","channel":"sms","estimated_group_size":3200,"planned_contacts":2500,"cost":10000,"expected_net_effect":38200,"posterior_lift":0.092,"uncertainty":0.025,"confidence_interval_95":[0.043,0.141],"risk_adjusted_lift":0.073,"pilots_used":2,"pilot_customers":300},
+    {"campaign_name":"HIGH / tariff_10 → tariff_11","filter_current_tariff":"tariff_10","filter_arpu_segment":"HIGH","target_tariff":"tariff_11","channel":"digital_ads","estimated_group_size":1800,"planned_contacts":1200,"cost":26400,"expected_net_effect":42100,"posterior_lift":0.138,"uncertainty":0.039,"confidence_interval_95":[0.062,0.214],"risk_adjusted_lift":0.109,"pilots_used":1,"pilot_customers":150},
+    {"campaign_name":"LITE / tariff_2 → tariff_6","filter_current_tariff":"tariff_2","filter_data_segment":"LITE","target_tariff":"tariff_6","channel":"push","estimated_group_size":4100,"planned_contacts":3500,"cost":0,"expected_net_effect":25600,"posterior_lift":0.057,"uncertainty":0.031,"confidence_interval_95":[-0.004,0.118],"risk_adjusted_lift":0.034,"pilots_used":1,"pilot_customers":150},
+    {"campaign_name":"MID / tariff_8 → tariff_10","filter_current_tariff":"tariff_8","filter_arpu_segment":"MID","target_tariff":"tariff_10","channel":"sms","estimated_group_size":2800,"planned_contacts":2200,"cost":8800,"expected_net_effect":27900,"posterior_lift":0.075,"uncertainty":0.022,"confidence_interval_95":[0.032,0.118],"risk_adjusted_lift":0.059,"pilots_used":1,"pilot_customers":150},
+    {"campaign_name":"HEAVY / tariff_5 → tariff_9","filter_current_tariff":"tariff_5","filter_data_segment":"HEAVY","target_tariff":"tariff_9","channel":"sms","estimated_group_size":2100,"planned_contacts":1800,"cost":7200,"expected_net_effect":19800,"posterior_lift":0.064,"uncertainty":0.041,"confidence_interval_95":[-0.016,0.144],"risk_adjusted_lift":0.033,"pilots_used":1,"pilot_customers":150},
+    {"campaign_name":"LOW / tariff_1 → tariff_3","filter_current_tariff":"tariff_1","filter_arpu_segment":"LOW","target_tariff":"tariff_3","channel":"push","estimated_group_size":2400,"planned_contacts":1800,"cost":0,"expected_net_effect":-3200,"posterior_lift":-0.011,"uncertainty":0.052,"confidence_interval_95":[-0.113,0.091],"risk_adjusted_lift":-0.050,"pilots_used":1,"pilot_customers":150,"warnings":["Отрицательная точечная оценка; рекомендация сохранена для прозрачности демо."]}
+  ],
+  "pilot_history": [
+    {"pilot":"pilot_1","target_tariff":"tariff_8","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":0.081,"observed_lift_total":9800,"status":"accepted"},
+    {"pilot":"pilot_2","target_tariff":"tariff_8","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":0.103,"observed_lift_total":12100,"status":"accepted"},
+    {"pilot":"pilot_3","target_tariff":"tariff_11","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":0.151,"observed_lift_total":16400,"status":"accepted"},
+    {"pilot":"pilot_4","target_tariff":"tariff_6","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":0.044,"observed_lift_total":5100},
+    {"pilot":"pilot_5","target_tariff":"tariff_10","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":0.079,"observed_lift_total":8700,"status":"accepted"},
+    {"pilot":"pilot_6","target_tariff":"tariff_9","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":0.052,"observed_lift_total":5900},
+    {"pilot":"pilot_7","target_tariff":"tariff_3","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":-0.018,"observed_lift_total":-1700,"status":"rejected"},
+    {"pilot":"pilot_8","target_tariff":"tariff_12","channel":"sms","n_customers":150,"cost":600,"observed_lift_ratio":-0.041,"observed_lift_total":-4600,"status":"rejected"}
+  ]
+}
