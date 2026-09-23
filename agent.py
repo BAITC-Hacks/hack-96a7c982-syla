@@ -218,6 +218,7 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     candidate["pilot_count"] += 1
     if candidate["pilot_count"] == 1:
         mean, std = _posterior(candidate)
+        # Skip a cell early only when even an optimistic estimate is negative.
         candidate["is_rejected"] = mean + std < 0.0
     return True
 
