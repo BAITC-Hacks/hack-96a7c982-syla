@@ -15,7 +15,7 @@ import pandas as pd
 PILOT_STD_PER_CUSTOMER = 0.804
 PRIOR_STD = 0.18  # Keep the historical prior weak: the target audience differs.
 INITIAL_PILOTS = 10
-FOLLOWUP_PILOTS = 4
+FOLLOWUP_PILOTS = 8
 INITIAL_PILOT_SIZE = 150
 FOLLOWUP_PILOT_SIZE = 200
 FINAL_CONTACT_RESERVE = 11_000
