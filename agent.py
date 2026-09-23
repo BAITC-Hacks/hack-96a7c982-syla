@@ -28,6 +28,7 @@ def _affordable_contacts(budget: float, unit_cost: float, limit: int) -> int:
     """Bound spending without converting a non-finite budget to an integer."""
     if limit <= 0 or not math.isfinite(unit_cost) or unit_cost < 0:
         return 0
+    # Free channels are still bounded by the contact limit.
     if unit_cost == 0:
         return limit
     try:
