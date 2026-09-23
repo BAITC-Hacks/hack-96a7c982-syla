@@ -233,7 +233,10 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
         if not options:
             break
         cautious_net, _, candidate, channel, n, cost = max(options, key=lambda item: (item[0], item[1]))
-        if cautious_net <= 0 and campaigns:
+        # Never launch a final campaign whose risk-adjusted value is non-positive.
+        # Pilots already count in scoring, so forcing a first bad campaign only burns
+        # contacts/budget and can reduce the final result.
+        if cautious_net <= 0:
             break
         cell = (candidate["filter_current_tariff"], candidate["filter_arpu_segment"])
         campaigns.append({
