@@ -137,6 +137,7 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
                 "precision": 1.0 / (PRIOR_STD ** 2),
                 "weighted_lift": prior_mean / (PRIOR_STD ** 2),
                 "pilot_count": 0,
+                "pilot_customers": 0,
                 "is_rejected": False,
                 "rank": rank,
             })
@@ -235,6 +236,7 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     candidate["precision"] += precision
     candidate["weighted_lift"] += observed * precision
     candidate["pilot_count"] += 1
+    candidate["pilot_customers"] = candidate.get("pilot_customers", 0) + actual_size
     mean, std = _posterior(candidate)
     if mean + std < 0.0:
         candidate["is_rejected"] = True
@@ -357,6 +359,7 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
             ],
             "risk_adjusted_lift": float(mean - RISK_LAMBDA * std),
             "pilots_used": int(candidate["pilot_count"]),
+            "pilot_customers": int(candidate.get("pilot_customers", 0)),
         })
         chosen_cells.add(cell)
         remaining_contacts -= n
