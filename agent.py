@@ -14,11 +14,12 @@ import pandas as pd
 
 PILOT_STD_PER_CUSTOMER = 0.804
 PRIOR_STD = 0.18  # Keep the historical prior weak: the target audience differs.
-INITIAL_PILOTS = 10
+INITIAL_PILOTS = 16
 FOLLOWUP_PILOTS = 4
 INITIAL_PILOT_SIZE = 150
 FOLLOWUP_PILOT_SIZE = 200
 FINAL_CONTACT_RESERVE = 11_000
+TARGET_PROMISING_CANDIDATES = 11
 
 
 def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
@@ -69,7 +70,6 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
     scale = max(float(tariffs["price_tariff"].median()), 1.0)
     historical, fallback_conversion = _historical_priors(tariffs)
     sms_multiplier = env.channels["sms"]["conversion_multiplier"]
-    sms_cost = env.channels["sms"]["cost_per_contact"]
 
     cells = profile.groupby(["current_tariff", "arpu_segment"], observed=True)
     ranked = []
@@ -95,8 +95,7 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
                 weight = count / (count + 30.0)
                 prior_mean = weight * history_ratio + (1.0 - weight) * fallback_ratio
             prior_mean = max(-0.5, min(0.75, prior_mean))
-            # A small exploration bonus keeps valuable uncertain groups in play.
-            rank = arpu_sum * (max(prior_mean, 0.0) + 0.025) - contactable * sms_cost
+            rank = arpu_sum * prior_mean
             ranked.append({
                 "filter_current_tariff": source,
                 "filter_arpu_segment": segment,
@@ -108,6 +107,7 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
                 "precision": 1.0 / (PRIOR_STD ** 2),
                 "weighted_lift": prior_mean / (PRIOR_STD ** 2),
                 "pilot_count": 0,
+                "is_rejected": False,
                 "rank": rank,
             })
 
@@ -129,14 +129,17 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
 
 
 def _posterior(candidate: dict) -> tuple[float, float]:
+    precision = candidate["precision"]
+    if precision <= 0:
+        raise ValueError("Posterior precision must be positive")
     return (
-        candidate["weighted_lift"] / candidate["precision"],
-        math.sqrt(1.0 / candidate["precision"]),
+        candidate["weighted_lift"] / precision,
+        math.sqrt(1.0 / precision),
     )
 
 
 def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
-    if env.pilots_left <= 0:
+    if env.pilots_left <= 0 or candidate.get("is_rejected", False):
         return False
     size = min(requested_size, candidate["audience_size"])
     cost = size * env.channels["sms"]["cost_per_contact"]
@@ -162,27 +165,74 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     candidate["precision"] += precision
     candidate["weighted_lift"] += observed * precision
     candidate["pilot_count"] += 1
+    if candidate["pilot_count"] == 1:
+        mean, std = _posterior(candidate)
+        candidate["is_rejected"] = mean + std < 0.0
     return True
 
 
+def _followup_value(env, candidate: dict) -> float:
+    """Approximate value of a new observation for the launch/no-launch choice."""
+    size = min(FOLLOWUP_PILOT_SIZE, candidate["audience_size"])
+    unit_cost = env.channels["sms"]["cost_per_contact"]
+    pilot_cost = size * unit_cost
+    if (size < 10 or env.pilots_left <= 0
+            or env.remaining_contacts - size < FINAL_CONTACT_RESERVE
+            or env.remaining_budget < pilot_cost):
+        return -math.inf
+
+    final_n = min(
+        candidate["audience_size"], 5000, env.remaining_contacts - size,
+        int((env.remaining_budget - pilot_cost) // unit_cost),
+    )
+    if final_n <= 0:
+        return -math.inf
+    arpu_sum = float(candidate["arpu_prefix"][final_n - 1])
+    mean, std = _posterior(candidate)
+    new_precision = candidate["precision"] + size / (PILOT_STD_PER_CUSTOMER ** 2)
+    new_std = math.sqrt(1.0 / new_precision)
+    # Across possible pilot results, the posterior mean itself varies by this SD.
+    decision_sd = arpu_sum * math.sqrt(max(0.0, std * std - new_std * new_std))
+    if decision_sd <= 0:
+        return -math.inf
+    margin = arpu_sum * mean - final_n * unit_cost
+    z = margin / decision_sd
+    normal_pdf = math.exp(-0.5 * z * z) / math.sqrt(2.0 * math.pi)
+    normal_cdf = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+    value_of_information = (
+        decision_sd * normal_pdf + margin * normal_cdf - max(0.0, margin)
+    )
+    return value_of_information - pilot_cost
+
+
 def _explore(env, candidates: list[dict]) -> None:
+    promising = 0
     for candidate in candidates:
+        if (promising >= TARGET_PROMISING_CANDIDATES
+                or env.pilots_left <= FOLLOWUP_PILOTS):
+            break
         if not _run_pilot(env, candidate, INITIAL_PILOT_SIZE):
             break
+        if candidate.get("is_rejected", False):
+            continue
+        mean, std = _posterior(candidate)
+        n = min(candidate["audience_size"], 5000)
+        cost = n * env.channels["sms"]["cost_per_contact"]
+        if (mean - 0.5 * std) * candidate["arpu_sum"] > cost:
+            promising += 1
 
     for _ in range(FOLLOWUP_PILOTS):
-        eligible = []
-        for candidate in candidates:
-            mean, std = _posterior(candidate)
-            if candidate["pilot_count"] != 1 or mean < -std:
-                continue
-            # More information is most useful for large, promising audiences.
-            value_of_information = candidate["arpu_sum"] * std
-            eligible.append((value_of_information, candidate))
-        if not eligible:
+        eligible = (
+            candidate for candidate in candidates
+            if candidate["pilot_count"] >= 1 and not candidate.get("is_rejected", False)
+        )
+        best = max(
+            ((_followup_value(env, candidate), candidate) for candidate in eligible),
+            key=lambda item: item[0], default=None,
+        )
+        if best is None or best[0] <= 0:
             break
-        candidate = max(eligible, key=lambda item: item[0])[1]
-        if not _run_pilot(env, candidate, FOLLOWUP_PILOT_SIZE):
+        if not _run_pilot(env, best[1], FOLLOWUP_PILOT_SIZE):
             break
 
 
@@ -194,6 +244,10 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
     while len(campaigns) < 10 and remaining_contacts > 0:
         options = []
         for candidate in candidates:
+            if (candidate.get("is_rejected", False)
+                    or (candidate["pilot_count"] == 0
+                        and candidate["audience_size"] >= INITIAL_PILOT_SIZE)):
+                continue
             cell = (candidate["filter_current_tariff"], candidate["filter_arpu_segment"])
             if cell in chosen_cells:
                 continue
