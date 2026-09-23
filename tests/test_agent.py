@@ -47,6 +47,27 @@ class PlanningLimitsTest(unittest.TestCase):
         self.assertEqual(1, len(campaigns))
         self.assertEqual("sms", campaigns[0]["channel"])
 
+    def test_does_not_force_negative_first_campaign(self):
+        env = SimpleNamespace(
+            channels=self.channels, remaining_contacts=200, remaining_budget=1000
+        )
+        campaigns = _plan(env, [candidate("tariff_1", 120, mean=-0.30)])
+        self.assertEqual([], campaigns)
+
+    def test_can_consider_digital_ads_when_economics_support_it(self):
+        channels = {
+            "push": {"cost_per_contact": 0, "conversion_multiplier": 0.50},
+            "sms": {"cost_per_contact": 4, "conversion_multiplier": 0.65},
+            "digital_ads": {"cost_per_contact": 22, "conversion_multiplier": 0.85},
+            "call": {"cost_per_contact": 160, "conversion_multiplier": 1.20},
+        }
+        env = SimpleNamespace(
+            channels=channels, remaining_contacts=120, remaining_budget=10000
+        )
+        campaigns = _plan(env, [candidate("tariff_1", 120, mean=0.30)])
+        self.assertEqual(1, len(campaigns))
+        self.assertIn(campaigns[0]["channel"], channels)
+
 
 if __name__ == "__main__":
     unittest.main()
