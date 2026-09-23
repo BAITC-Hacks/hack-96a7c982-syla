@@ -7,6 +7,7 @@
   <title>Beeline Tariff Copilot · Локальная симуляция</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
+  <script src="/history.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -29,6 +30,7 @@
       <nav class="view-tabs" aria-label="Разделы приложения">
         <button id="data-tab" class="view-tab active" type="button" aria-pressed="true">01 <span>Данные</span></button>
         <button id="plan-tab" class="view-tab" type="button" aria-pressed="false" disabled>02 <span>План кампаний</span></button>
+        <button id="history-tab" class="view-tab" type="button" aria-pressed="false">03 <span>Прогноз → факт</span></button>
         <span class="local-label">Локальное рабочее пространство</span>
       </nav>
       <div id="message" class="message" role="status" aria-live="polite" hidden></div>
@@ -58,6 +60,7 @@
         <span id="seed-label" class="notice-seed">SEED 42</span>
       </div>
       <div class="source-bar"><span id="source-label"></span><button id="change-data-button" type="button">Изменить данные ↗</button></div>
+      <div class="journal-status"><span id="journal-status" role="status"></span><button id="open-current-run" type="button" hidden>Посмотреть разбор пилотов →</button></div>
 
       <section class="overview" aria-label="Итог плана">
         <div class="overview-heading">
@@ -110,6 +113,20 @@
           </div>
         </section>
       </div>
+      </section>
+
+      <section id="history-view" aria-labelledby="history-heading" hidden>
+        <div class="data-heading"><div><p class="eyebrow">ОПЫТ КАЖДОГО ПИЛОТА</p><h2 id="history-heading">Прогноз → факт</h2><p>Как наблюдение изменило оценку — от первой гипотезы до повторного пилота.</p></div><button id="refresh-history" class="button button-light" type="button">Обновить журнал ↻</button></div>
+        <div class="history-notice"><strong>Пока только симуляции</strong><p>«Факт» в этом журнале — шумный результат смоделированного пилота. Реальные результаты рассылок ещё не импортируются. Сохранённые записи пока не используются для обучения следующих запусков.</p></div>
+        <div id="history-message" class="empty-state" role="status">Загружаем журнал…</div>
+        <div id="history-content" hidden>
+          <div class="history-controls"><label for="run-select">Сохранённый расчёт<select id="run-select"></select></label><a id="export-pilots" class="button button-light" href="#" download="pilot_history.csv">Скачать пилоты CSV ↓</a></div>
+          <p id="run-meta" class="footnote"></p>
+          <div id="history-metrics" class="history-metrics"></div>
+          <div class="history-table-heading"><div><h3>Что изменилось после наблюдения</h3><p>Проценты — изменение ARPU. Отклонение — наблюдение минус прогноз, в процентных пунктах.</p></div><label for="pilot-filter">Показать<select id="pilot-filter"><option value="all">Все пилоты</option><option value="followup">Повторные пилоты</option><option value="rejected">Отклонённые гипотезы</option></select></label></div>
+          <div class="history-table-wrap" role="region" aria-label="Сравнение прогнозов и результатов пилотов" tabindex="0"><table class="history-table"><thead><tr><th scope="col">Пилот / гипотеза</th><th scope="col">Прогноз до</th><th scope="col">Результат симуляции</th><th scope="col">Оценка после</th><th scope="col">Отклонение</th><th scope="col">Ресурсы</th><th scope="col">Итог гипотезы</th></tr></thead><tbody id="pilot-history-rows"></tbody></table></div>
+          <p class="footnote">σ показывает неопределённость модели; SE — шум измерения пилота. Уменьшение σ после обновления не доказывает рост точности на новых клиентах. Повторный запуск того же сценария не добавляет новое наблюдение в журнал.</p>
+        </div>
       </section>
 
       <footer class="footer-note">

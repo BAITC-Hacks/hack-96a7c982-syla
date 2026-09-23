@@ -164,7 +164,7 @@ function renderInspector() {
 }
 
 function showView(view) {
-  for (const name of ['data', 'plan']) {
+  for (const name of ['data', 'plan', 'history']) {
     byId(`${name}-view`).hidden = name !== view;
     byId(`${name}-tab`).classList.toggle('active', name === view);
     byId(`${name}-tab`).setAttribute('aria-pressed', String(name === view));
@@ -204,6 +204,7 @@ async function loadPlan(seed, datasetId = report?.dataset.id || 'demo') {
     byId('plan-tab').disabled = false;
     showView('plan');
     window.scrollTo({top: 0, behavior: 'instant'});
+    await saveRun(report);
   } catch (error) {
     byId('message').textContent = `Не удалось построить план: ${error.message}. Проверьте, что локальный сервер запущен.`;
     byId('message').hidden = false;
