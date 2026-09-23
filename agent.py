@@ -205,7 +205,9 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
             if cell in chosen_cells:
                 continue
             mean_sms, std_sms = _posterior(candidate)
-            for channel in ("push", "sms"):
+            for channel in ("push", "sms", "digital_ads", "call"):
+                if channel not in env.channels:
+                    continue
                 channel_info = env.channels[channel]
                 unit_cost = channel_info["cost_per_contact"]
                 affordable = remaining_contacts if unit_cost == 0 else int(remaining_budget // unit_cost)
