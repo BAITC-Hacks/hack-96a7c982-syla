@@ -89,7 +89,15 @@ def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
 def _candidates(env) -> tuple[list[dict], list[dict]]:
     profile = env.customer_profile.dropna(
         subset=["current_tariff", "arpu_segment", "predicted_arpu"]
+    ).copy()
+    profile["predicted_arpu"] = pd.to_numeric(
+        profile["predicted_arpu"], errors="coerce"
     )
+    profile = profile[
+        profile["predicted_arpu"].notna()
+        & profile["predicted_arpu"].map(math.isfinite)
+        & (profile["predicted_arpu"] >= 0)
+    ]
     tariffs = env.tariffs.dropna(subset=["tariff_plan_code"])
     prices = dict(zip(tariffs["tariff_plan_code"], tariffs["price_tariff"]))
     scale = max(float(tariffs["price_tariff"].median()), 1.0)
