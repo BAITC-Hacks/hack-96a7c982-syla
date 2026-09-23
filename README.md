@@ -320,3 +320,4 @@ python compare_agents.py
 <!-- Final demo note: synthetic evaluation results should be presented as simulation metrics, not production Beeline KPIs. -->
 <!-- Submission safety: final campaign limits and generated CSV should be rechecked immediately before upload. -->
 <!-- Demo readiness: keep the last verified local run available as a fallback during presentation. -->
+<!-- Reproducibility: record the final commit SHA and evaluation seed used for the submitted artifact. -->
