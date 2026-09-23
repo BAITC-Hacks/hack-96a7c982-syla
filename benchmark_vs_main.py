@@ -10,6 +10,7 @@ Runs identical mock seeds and reports stability plus failure rate.
 from __future__ import annotations
 import importlib.util
 import statistics
+import math
 import sys
 from pathlib import Path
 from local_eval import evaluate_agent
@@ -22,7 +23,7 @@ def load_agent(path, name):
 
 def run(path, name, seeds=range(20)):
     agent = load_agent(path, name)
-    nets, failures = [], 0
+    nets, rois, failures = [], [], 0
     for seed in seeds:
         try:
             result = evaluate_agent(agent, seed=seed, verbose=False)
@@ -30,6 +31,9 @@ def run(path, name, seeds=range(20)):
                 failures += 1
                 continue
             nets.append(float(result["net_arpu_gain"]))
+            roi = float(result.get("roi", 0.0))
+            if math.isfinite(roi):
+                rois.append(roi)
         except Exception:
             failures += 1
     return {
@@ -39,6 +43,7 @@ def run(path, name, seeds=range(20)):
         "min_net": min(nets) if nets else float("nan"),
         "max_net": max(nets) if nets else float("nan"),
         "stdev_net": statistics.pstdev(nets) if len(nets) > 1 else 0.0,
+        "mean_roi": statistics.mean(rois) if rois else float("nan"),
     }
 
 def main():
@@ -46,10 +51,10 @@ def main():
         raise SystemExit("usage: benchmark_vs_main.py MAIN_AGENT.py EXPERIMENT_AGENT.py")
     rows = [("main", run(Path(sys.argv[1]), "baseline_agent")),
             ("experiment", run(Path(sys.argv[2]), "experiment_agent"))]
-    print("version      runs failures positive median_net      min_net         stdev")
+    print("version      runs failures positive median_net      min_net         stdev       mean_roi")
     for name, x in rows:
         print(f"{name:<11} {x['runs']:>4} {x['failures']:>8} {x['positive']:>8} "
-              f"{x['median_net']:>14,.0f} {x['min_net']:>14,.0f} {x['stdev_net']:>14,.0f}")
+              f"{x['median_net']:>14,.0f} {x['min_net']:>14,.0f} {x['stdev_net']:>14,.0f} {x['mean_roi']:>10.2f}")
     if all(r[1]["failures"] == 0 for r in rows):
         delta = rows[1][1]["median_net"] - rows[0][1]["median_net"]
         print(f"\nmedian delta experiment-main: {delta:+,.0f}")
