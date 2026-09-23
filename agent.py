@@ -14,7 +14,7 @@ import pandas as pd
 
 PILOT_STD_PER_CUSTOMER = 0.804
 PRIOR_STD = 0.18  # Keep the historical prior weak: the target audience differs.
-INITIAL_PILOTS = 10
+INITIAL_PILOTS = 12
 FOLLOWUP_PILOTS = 8
 INITIAL_PILOT_SIZE = 150
 FOLLOWUP_PILOT_SIZE = 200
@@ -119,19 +119,51 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
             })
 
     ranked.sort(key=lambda c: c["rank"], reverse=True)
-    # Distinct cells make the final campaigns disjoint and spread exploration.
+
+    # Explore both audience choice AND target-tariff choice. The old version kept
+    # only one target per (current tariff, ARPU) cell, which made the historical
+    # prior irreversible: pilots could confirm/reject that target but could never
+    # discover that another target is better on the hidden audience.
     selected = []
     small = []
-    seen_cells = set()
+    first_by_cell = {}
+    second_by_cell = {}
     for candidate in ranked:
         cell = (candidate["filter_current_tariff"], candidate["filter_arpu_segment"])
-        if cell in seen_cells:
-            continue
-        seen_cells.add(cell)
         if candidate["audience_size"] < INITIAL_PILOT_SIZE:
-            small.append(candidate)
-        elif len(selected) < INITIAL_PILOTS:
-            selected.append(candidate)
+            if cell not in first_by_cell:
+                small.append(candidate)
+            continue
+        if cell not in first_by_cell:
+            first_by_cell[cell] = candidate
+        elif cell not in second_by_cell:
+            second_by_cell[cell] = candidate
+
+    # First buy breadth: one hypothesis from the highest-value distinct cells.
+    first = sorted(first_by_cell.values(), key=lambda c: c["rank"], reverse=True)
+    breadth = min(8, INITIAL_PILOTS)
+    selected.extend(first[:breadth])
+
+    # Then buy target discrimination inside those valuable cells. This is robust
+    # to the explicit case requirement that hidden effects differ from history.
+    selected_cells = {
+        (c["filter_current_tariff"], c["filter_arpu_segment"]) for c in selected
+    }
+    alternatives = [
+        c for cell, c in second_by_cell.items() if cell in selected_cells
+    ]
+    alternatives.sort(key=lambda c: c["rank"], reverse=True)
+    selected.extend(alternatives[: max(0, INITIAL_PILOTS - len(selected))])
+
+    # If too few second arms exist, fill with additional distinct cells.
+    if len(selected) < INITIAL_PILOTS:
+        used = {id(c) for c in selected}
+        for candidate in first[breadth:]:
+            if id(candidate) not in used:
+                selected.append(candidate)
+                used.add(id(candidate))
+                if len(selected) >= INITIAL_PILOTS:
+                    break
     return selected, small
 
 
@@ -189,8 +221,12 @@ def _explore(env, candidates: list[dict]) -> None:
             # Sequential exploration: recompute after every result. Prefer uncertain
             # high-value cells, but discount repeatedly sampled cells so pilots spread
             # unless one decision is genuinely close and valuable.
+            # Information matters most near the launch/no-launch boundary.
+            # A clearly positive arm needs less confirmation than an ambiguous one.
+            boundary_weight = math.exp(-abs(mean) / max(2.0 * std, 1e-9))
             value_of_information = (
-                candidate["arpu_sum"] * std / math.sqrt(candidate["pilot_count"])
+                candidate["arpu_sum"] * std * (0.35 + 0.65 * boundary_weight)
+                / math.sqrt(candidate["pilot_count"])
             )
             eligible.append((value_of_information, candidate))
         if not eligible:
