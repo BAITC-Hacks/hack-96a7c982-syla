@@ -27,7 +27,14 @@ def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
     if not path.exists():
         return {}, 0.10
 
-    history = pd.read_csv(path)
+    try:
+        history = pd.read_csv(path)
+        required = {"AVG_ARPU_PREV_3M", "AVG_ARPU_NEXT_3M",
+                    "tariff_plan_code_from", "tariff_plan_code_to"}
+        if not required.issubset(history.columns):
+            return {}, 0.10
+    except (OSError, ValueError, pd.errors.ParserError):
+        return {}, 0.10
     history = history.loc[history["AVG_ARPU_PREV_3M"] >= 100].copy()
     history["arpu_segment"] = pd.cut(
         history["AVG_ARPU_PREV_3M"],
@@ -229,6 +236,11 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
             "filter_arpu_segment": candidate["filter_arpu_segment"],
             "target_tariff": candidate["target_tariff"],
             "channel": channel,
+            # UI/report contract. The scorer ignores these extra fields.
+            "estimated_group_size": int(n),
+            "expected_net_effect": float(expected_net),
+            "uncertainty": float(std),
+            "pilots_used": int(candidate["pilot_count"]),
         })
         chosen_cells.add(cell)
         remaining_contacts -= n
