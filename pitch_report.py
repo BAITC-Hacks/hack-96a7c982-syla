@@ -30,6 +30,8 @@ def build(seed=42):
             "uncertainty": c.get("uncertainty"),
             "confidence_interval_95": c.get("confidence_interval_95"),
             "pilots_used": c.get("pilots_used"),
+            "pilot_customers": c.get("pilot_customers"),
+            "risk_adjusted_lift": c.get("risk_adjusted_lift"),
         })
     payload = {
         "seed": seed,
