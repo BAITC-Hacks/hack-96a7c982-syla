@@ -1,5 +1,7 @@
 # Beeline tariff campaign agent — MVP
 
+Hackathon team repository for syla.
+
 Рабочий агент для кейса HackAlem AI. Он использует только предоставленные данные и публичный интерфейс `env`; скрытые эффекты среды не читает.
 
 ## Запуск
