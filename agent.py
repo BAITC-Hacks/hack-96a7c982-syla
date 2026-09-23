@@ -64,6 +64,7 @@ def _historical_priors(tariffs: pd.DataFrame, history=None) -> tuple[dict, float
         bins=[-math.inf, 1000, 5000, math.inf],
         labels=["LOW", "MID", "HIGH"],
     ).astype(str)
+    # Cap extreme historical changes so a few outliers cannot dominate the prior.
     history["change_ratio"] = (
         (history["AVG_ARPU_NEXT_3M"] - history["AVG_ARPU_PREV_3M"])
         / history["AVG_ARPU_PREV_3M"]
@@ -128,6 +129,7 @@ def _candidates(env, prior_provider=None) -> tuple[list[dict], list[dict]]:
             else:
                 change, conversion, count = entry
                 history_ratio = change * min(conversion * sms_multiplier, 1.0)
+                # Sparse transitions stay close to the tariff-based fallback.
                 weight = count / (count + 30.0)
                 prior_mean = weight * history_ratio + (1.0 - weight) * fallback_ratio
             prior_mean = max(-0.5, min(0.75, prior_mean))
@@ -203,6 +205,7 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     if (not math.isfinite(observed) or reported_size != actual_size
             or not 0 < actual_size <= size):
         return False
+    # A larger pilot contributes more precision to the lift estimate.
     precision = actual_size / (PILOT_STD_PER_CUSTOMER ** 2)
     updated_precision = candidate["precision"] + precision
     updated_weight = candidate["weighted_lift"] + observed * precision
