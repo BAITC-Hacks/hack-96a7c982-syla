@@ -255,6 +255,7 @@ def _followup_value(env, candidate: dict) -> float:
     value_of_information = (
         decision_sd * normal_pdf + margin * normal_cdf - max(0.0, margin)
     )
+    # Extra testing is worthwhile only if its decision value covers the pilot.
     return value_of_information - pilot_cost
 
 
