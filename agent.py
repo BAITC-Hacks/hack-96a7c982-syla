@@ -131,11 +131,13 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
     small = []
     first_by_cell = {}
     second_by_cell = {}
+    small_seen = set()
     for candidate in ranked:
         cell = (candidate["filter_current_tariff"], candidate["filter_arpu_segment"])
         if candidate["audience_size"] < INITIAL_PILOT_SIZE:
-            if cell not in first_by_cell:
+            if cell not in small_seen:
                 small.append(candidate)
+                small_seen.add(cell)
             continue
         if cell not in first_by_cell:
             first_by_cell[cell] = candidate
@@ -313,10 +315,61 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
     return campaigns
 
 
+def _fallback_agent(env) -> list[dict]:
+    """Minimal legal strategy if model/prior construction fails unexpectedly."""
+    try:
+        profile = env.customer_profile.dropna(
+            subset=["current_tariff", "arpu_segment", "predicted_arpu"]
+        )
+        tariffs = list(env.tariffs["tariff_plan_code"].dropna())
+        if profile.empty or not tariffs:
+            return []
+        # Pick a large/high-value cell and a different target. One push pilot is
+        # free in money terms; use its sign to avoid blindly launching.
+        grouped = []
+        for (source, segment), members in profile.groupby(
+            ["current_tariff", "arpu_segment"], observed=True
+        ):
+            if len(members) >= 10:
+                grouped.append((float(members["predicted_arpu"].sum()), source, segment, len(members)))
+        if not grouped:
+            return []
+        _, source, segment, n = max(grouped)
+        targets = [t for t in tariffs if t != source]
+        if not targets:
+            return []
+        prices = dict(zip(env.tariffs["tariff_plan_code"], env.tariffs["price_tariff"]))
+        target = max(targets, key=lambda t: prices.get(t, 0.0))
+        pilot_n = min(200, n)
+        result = env.run_pilot(
+            target_tariff=target, channel="push", n_customers=pilot_n,
+            filter_current_tariff=source, filter_arpu_segment=segment,
+        )
+        if float(result.get("observed_lift_ratio", 0.0)) <= 0:
+            return []
+        return [{
+            "campaign_name": "fallback_positive_pilot",
+            "filter_current_tariff": source,
+            "filter_arpu_segment": segment,
+            "target_tariff": target,
+            "channel": "push",
+            "estimated_group_size": int(min(n, 5000, env.remaining_contacts)),
+            "expected_net_effect": None,
+            "uncertainty": PILOT_STD_PER_CUSTOMER / math.sqrt(max(pilot_n, 1)),
+            "pilots_used": 1,
+        }]
+    except Exception:
+        return []
+
+
 class Agent:
     def act(self, env) -> list[dict]:
-        piloted_candidates, small_candidates = _candidates(env)
-        if not piloted_candidates:
-            return []
-        _explore(env, piloted_candidates)
-        return _plan(env, piloted_candidates + small_candidates)
+        try:
+            piloted_candidates, small_candidates = _candidates(env)
+            if not piloted_candidates:
+                return _fallback_agent(env)
+            _explore(env, piloted_candidates)
+            return _plan(env, piloted_candidates + small_candidates)
+        except Exception:
+            # Requirement: remain operational even if the prior/model cannot load.
+            return _fallback_agent(env)
