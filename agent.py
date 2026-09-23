@@ -19,6 +19,7 @@ FOLLOWUP_PILOTS = 8
 INITIAL_PILOT_SIZE = 150
 FOLLOWUP_PILOT_SIZE = 200
 FINAL_CONTACT_RESERVE = 11_000
+RISK_LAMBDA = 0.75  # risk-adjusted utility: mean - lambda * posterior std
 
 
 def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
@@ -223,6 +224,8 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
 
 
 def _explore(env, candidates: list[dict]) -> None:
+    if env.pilots_left <= 0 or env.remaining_contacts <= 0 or env.remaining_budget < 0:
+        return
     for candidate in candidates:
         if not _run_pilot(env, candidate, INITIAL_PILOT_SIZE):
             break
@@ -252,8 +255,10 @@ def _explore(env, candidates: list[dict]) -> None:
 
 
 def _plan(env, candidates: list[dict]) -> list[dict]:
-    remaining_contacts = env.remaining_contacts
-    remaining_budget = env.remaining_budget
+    remaining_contacts = max(0, int(env.remaining_contacts))
+    remaining_budget = max(0.0, float(env.remaining_budget))
+    if remaining_contacts <= 0:
+        return []
     chosen_cells = set()
     campaigns = []
     while len(campaigns) < 10 and remaining_contacts > 0:
@@ -293,8 +298,9 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
                 cost = n * unit_cost
                 expected_net = arpu_sum * mean - cost
                 # Unpiloted small groups need stronger evidence than piloted cells.
-                penalty = 1.0 if not candidate["pilot_count"] else 0.5
-                cautious_net = arpu_sum * (mean - penalty * std) - cost
+                penalty = 1.0 if not candidate["pilot_count"] else RISK_LAMBDA
+                risk_adjusted_lift = mean - penalty * std
+                cautious_net = arpu_sum * risk_adjusted_lift - cost
                 # Prefer value per scarce contact as a tie-breaker, while absolute
                 # cautious net remains the primary objective.
                 cautious_per_contact = cautious_net / max(n, 1)
@@ -321,6 +327,10 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
             "estimated_group_size": int(n),
             "expected_net_effect": float(expected_net),
             "uncertainty": float(std),
+            "confidence_interval_95": [
+                float(mean - 1.96 * std), float(mean + 1.96 * std)
+            ],
+            "risk_adjusted_lift": float(mean - RISK_LAMBDA * std),
             "pilots_used": int(candidate["pilot_count"]),
         })
         chosen_cells.add(cell)
