@@ -20,6 +20,7 @@ INITIAL_PILOT_SIZE = 150
 FOLLOWUP_PILOT_SIZE = 200
 FINAL_CONTACT_RESERVE = 11_000
 TARGET_PROMISING_CANDIDATES = 11
+PILOTED_RISK_PENALTY = 1.0
 
 
 def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
@@ -268,7 +269,7 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
                 cost = n * unit_cost
                 expected_net = arpu_sum * mean - cost
                 # Unpiloted small groups need stronger evidence than piloted cells.
-                penalty = 1.0 if not candidate["pilot_count"] else 0.5
+                penalty = 1.0 if not candidate["pilot_count"] else PILOTED_RISK_PENALTY
                 cautious_net = arpu_sum * (mean - penalty * std) - cost
                 options.append((cautious_net, expected_net, candidate, channel, n, cost))
         if not options:
