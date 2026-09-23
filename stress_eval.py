@@ -51,7 +51,7 @@ def shifted_model(base: pd.DataFrame, seed: int, change_sd: float,
 
 def evaluate(seed: int, base: pd.DataFrame, profile: pd.DataFrame,
              tariffs: pd.DataFrame, change_sd: float,
-             change_bias: float) -> dict:
+             change_bias: float, agent_instance=None) -> dict:
     model = shifted_model(base, seed, change_sd, change_bias)
     env, scoring_state = make_environment(
         customer_profile=profile, impact_model=model, dict_tariff=tariffs,
@@ -59,7 +59,7 @@ def evaluate(seed: int, base: pd.DataFrame, profile: pd.DataFrame,
         max_total_contacts=MAX_TOTAL_CONTACTS, fallback_predict=_mock_fallback,
         seed=seed,
     )
-    final = sanitize_campaigns(Agent().act(env), tariffs)
+    final = sanitize_campaigns((agent_instance or Agent()).act(env), tariffs)
     pilots = scoring_state.executed_pilot_campaigns()
     campaigns = pd.DataFrame(pilots + final)
     for column in (

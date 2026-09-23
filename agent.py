@@ -62,14 +62,16 @@ def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
     return prior, fallback_conversion
 
 
-def _candidates(env) -> tuple[list[dict], list[dict]]:
+def _candidates(env, prior_provider=None) -> tuple[list[dict], list[dict]]:
     profile = env.customer_profile.dropna(
         subset=["current_tariff", "arpu_segment", "predicted_arpu"]
     )
     tariffs = env.tariffs.dropna(subset=["tariff_plan_code"])
     prices = dict(zip(tariffs["tariff_plan_code"], tariffs["price_tariff"]))
     scale = max(float(tariffs["price_tariff"].median()), 1.0)
-    historical, fallback_conversion = _historical_priors(tariffs)
+    historical, fallback_conversion = (
+        _historical_priors(tariffs) if prior_provider is None else prior_provider(tariffs)
+    )
     sms_multiplier = env.channels["sms"]["conversion_multiplier"]
 
     cells = profile.groupby(["current_tariff", "arpu_segment"], observed=True)
@@ -292,8 +294,11 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
 
 
 class Agent:
+    def __init__(self, prior_provider=None):
+        self.prior_provider = prior_provider
+
     def act(self, env) -> list[dict]:
-        piloted_candidates, small_candidates = _candidates(env)
+        piloted_candidates, small_candidates = _candidates(env, self.prior_provider)
         if not piloted_candidates:
             return []
         _explore(env, piloted_candidates)
