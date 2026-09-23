@@ -88,6 +88,7 @@ def _historical_priors(tariffs: pd.DataFrame, history=None) -> tuple[dict, float
         prior[(source, segment, target)] = (
             float(row["mean"]), conversion, count
         )
+    # Use the median observed rate when a tariff transition has no history.
     fallback_conversion = float(pd.Series(conversion_rates).median()) if conversion_rates else 0.10
     return prior, fallback_conversion
 
