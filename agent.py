@@ -181,10 +181,14 @@ def _explore(env, candidates: list[dict]) -> None:
         eligible = []
         for candidate in candidates:
             mean, std = _posterior(candidate)
-            if candidate["pilot_count"] != 1 or mean < -std:
+            if candidate["pilot_count"] < 1 or mean < -std:
                 continue
-            # More information is most useful for large, promising audiences.
-            value_of_information = candidate["arpu_sum"] * std
+            # Sequential exploration: recompute after every result. Prefer uncertain
+            # high-value cells, but discount repeatedly sampled cells so pilots spread
+            # unless one decision is genuinely close and valuable.
+            value_of_information = (
+                candidate["arpu_sum"] * std / math.sqrt(candidate["pilot_count"])
+            )
             eligible.append((value_of_information, candidate))
         if not eligible:
             break
