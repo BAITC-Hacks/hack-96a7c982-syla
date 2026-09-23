@@ -23,13 +23,41 @@ TARGET_PROMISING_CANDIDATES = 11
 PILOTED_RISK_PENALTY = 1.0
 
 
+def _affordable_contacts(budget: float, unit_cost: float, limit: int) -> int:
+    """Bound spending without converting a non-finite budget to an integer."""
+    if limit <= 0 or not math.isfinite(unit_cost) or unit_cost < 0:
+        return 0
+    if unit_cost == 0:
+        return limit
+    try:
+        budget = float(budget)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if math.isnan(budget) or budget <= 0:
+        return 0
+    if math.isinf(budget):
+        return limit
+    return min(limit, int(budget // unit_cost))
+
+
 def _historical_priors(tariffs: pd.DataFrame, history=None) -> tuple[dict, float]:
     """Estimate coarse transition priors from the supplied *other* population."""
     path = Path(__file__).resolve().parent / "data" / "change_tariff.csv"
     if history is None:
         if not path.exists():
             return {}, 0.10
-        history = pd.read_csv(path)
+        try:
+            history = pd.read_csv(path)
+        except (OSError, ValueError):
+            return {}, 0.10
+    required = {"AVG_ARPU_PREV_3M", "AVG_ARPU_NEXT_3M",
+                "tariff_plan_code_from", "tariff_plan_code_to"}
+    if not required.issubset(history.columns):
+        return {}, 0.10
+    history = history.copy()
+    for column in ("AVG_ARPU_PREV_3M", "AVG_ARPU_NEXT_3M"):
+        history[column] = pd.to_numeric(history[column], errors="coerce")
+        history = history.loc[history[column].map(math.isfinite) & (history[column] >= 0)]
     history = history.loc[history["AVG_ARPU_PREV_3M"] >= 100].copy()
     history["arpu_segment"] = pd.cut(
         history["AVG_ARPU_PREV_3M"],
@@ -64,8 +92,9 @@ def _historical_priors(tariffs: pd.DataFrame, history=None) -> tuple[dict, float
 
 def _candidates(env, prior_provider=None) -> tuple[list[dict], list[dict]]:
     profile = env.customer_profile.dropna(
-        subset=["current_tariff", "arpu_segment", "predicted_arpu"]
-    )
+        subset=["current_tariff", "arpu_segment"]
+    ).copy()
+    profile["predicted_arpu"] = pd.to_numeric(profile["predicted_arpu"], errors="coerce")
     tariffs = env.tariffs.dropna(subset=["tariff_plan_code"])
     prices = dict(zip(tariffs["tariff_plan_code"], tariffs["price_tariff"]))
     scale = max(float(tariffs["price_tariff"].median()), 1.0)
@@ -78,7 +107,11 @@ def _candidates(env, prior_provider=None) -> tuple[list[dict], list[dict]]:
     ranked = []
     for (source, segment), members in cells:
         n = len(members)
-        if n < 10:
+        # Filters cannot exclude individual bad rows. Dropping those rows here
+        # would make our prefix differ from the audience the scorer contacts.
+        if (n < 10 or source not in prices
+                or not members["predicted_arpu"].map(math.isfinite).all()
+                or (members["predicted_arpu"] < 0).any()):
             continue
         # The scorer contacts the lowest IDs first and caps each campaign at 5000.
         arpu_prefix = members.sort_values("ID_NUMBER")["predicted_arpu"].cumsum().to_numpy()
@@ -133,8 +166,10 @@ def _candidates(env, prior_provider=None) -> tuple[list[dict], list[dict]]:
 
 def _posterior(candidate: dict) -> tuple[float, float]:
     precision = candidate["precision"]
-    if precision <= 0:
-        raise ValueError("Posterior precision must be positive")
+    if not math.isfinite(precision) or precision <= 0:
+        raise ValueError("Posterior precision must be finite and positive")
+    if not math.isfinite(candidate["weighted_lift"]):
+        raise ValueError("Posterior weighted lift must be finite")
     return (
         candidate["weighted_lift"] / precision,
         math.sqrt(1.0 / precision),
@@ -145,10 +180,9 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     if env.pilots_left <= 0 or candidate.get("is_rejected", False):
         return False
     size = min(requested_size, candidate["audience_size"])
-    cost = size * env.channels["sms"]["cost_per_contact"]
     if size < 10 or env.remaining_contacts - size < FINAL_CONTACT_RESERVE:
         return False
-    if env.remaining_budget < cost:
+    if _affordable_contacts(env.remaining_budget, env.channels["sms"]["cost_per_contact"], size) < size:
         return False
     try:
         result = env.run_pilot(
@@ -160,13 +194,22 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
         )
     except (RuntimeError, ValueError):
         return False
-    observed = float(result["observed_lift_ratio"])
-    actual_size = int(result["n_customers"])
-    if not math.isfinite(observed) or actual_size <= 0:
+    try:
+        observed = float(result["observed_lift_ratio"])
+        reported_size = float(result["n_customers"])
+        actual_size = int(reported_size)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    if (not math.isfinite(observed) or reported_size != actual_size
+            or not 0 < actual_size <= size):
         return False
     precision = actual_size / (PILOT_STD_PER_CUSTOMER ** 2)
-    candidate["precision"] += precision
-    candidate["weighted_lift"] += observed * precision
+    updated_precision = candidate["precision"] + precision
+    updated_weight = candidate["weighted_lift"] + observed * precision
+    if not math.isfinite(updated_precision) or not math.isfinite(updated_weight):
+        return False
+    candidate["precision"] = updated_precision
+    candidate["weighted_lift"] = updated_weight
     candidate["pilot_count"] += 1
     if candidate["pilot_count"] == 1:
         mean, std = _posterior(candidate)
@@ -181,12 +224,12 @@ def _followup_value(env, candidate: dict) -> float:
     pilot_cost = size * unit_cost
     if (size < 10 or env.pilots_left <= 0
             or env.remaining_contacts - size < FINAL_CONTACT_RESERVE
-            or env.remaining_budget < pilot_cost):
+            or _affordable_contacts(env.remaining_budget, unit_cost, size) < size):
         return -math.inf
 
     final_n = min(
         candidate["audience_size"], 5000, env.remaining_contacts - size,
-        int((env.remaining_budget - pilot_cost) // unit_cost),
+        _affordable_contacts(env.remaining_budget - pilot_cost, unit_cost, 5000),
     )
     if final_n <= 0:
         return -math.inf
@@ -215,7 +258,9 @@ def _explore(env, candidates: list[dict]) -> None:
                 or env.pilots_left <= FOLLOWUP_PILOTS):
             break
         if not _run_pilot(env, candidate, INITIAL_PILOT_SIZE):
-            break
+            # A corrupt response must not prevent testing the rest of the pool.
+            # This loop is bounded and every attempt rechecks public resources.
+            continue
         if candidate.get("is_rejected", False):
             continue
         mean, std = _posterior(candidate)
@@ -241,7 +286,12 @@ def _explore(env, candidates: list[dict]) -> None:
 
 def _plan(env, candidates: list[dict]) -> list[dict]:
     remaining_contacts = env.remaining_contacts
-    remaining_budget = env.remaining_budget
+    try:
+        remaining_budget = float(env.remaining_budget)
+    except (TypeError, ValueError, OverflowError):
+        remaining_budget = 0.0
+    if math.isnan(remaining_budget) or remaining_budget < 0:
+        remaining_budget = 0.0
     chosen_cells = set()
     campaigns = []
     while len(campaigns) < 10 and remaining_contacts > 0:
@@ -255,10 +305,15 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
             if cell in chosen_cells:
                 continue
             mean_sms, std_sms = _posterior(candidate)
-            for channel in ("push", "sms"):
+            # These multipliers are <= 1, so scaling SMS lift is exact for a
+            # valid conversion probability. Call can saturate and needs its own
+            # evidence; historical conversion is not known for this population.
+            for channel in ("push", "sms", "digital_ads"):
+                if channel not in env.channels:
+                    continue
                 channel_info = env.channels[channel]
                 unit_cost = channel_info["cost_per_contact"]
-                affordable = remaining_contacts if unit_cost == 0 else int(remaining_budget // unit_cost)
+                affordable = _affordable_contacts(remaining_budget, unit_cost, remaining_contacts)
                 n = min(candidate["audience_size"], 5000, remaining_contacts, affordable)
                 if n <= 0:
                     continue
@@ -277,7 +332,7 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
         if not options:
             break
         cautious_net, _, candidate, channel, n, cost = max(options, key=lambda item: (item[0], item[1]))
-        if cautious_net <= 0 and campaigns:
+        if cautious_net <= 0:
             break
         cell = (candidate["filter_current_tariff"], candidate["filter_arpu_segment"])
         campaigns.append({
@@ -299,7 +354,7 @@ class Agent:
 
     def act(self, env) -> list[dict]:
         piloted_candidates, small_candidates = _candidates(env, self.prior_provider)
-        if not piloted_candidates:
+        if not piloted_candidates and not small_candidates:
             return []
         _explore(env, piloted_candidates)
         return _plan(env, piloted_candidates + small_candidates)

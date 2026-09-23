@@ -28,7 +28,7 @@ from make_submission import CAMPAIGN_COLUMNS
 from mock_environment import (
     CHANNELS, MAX_TOTAL_CONTACTS, TOTAL_BUDGET, _mock_fallback, _mock_impact_model,
 )
-from scoring_core import MAX_CAMPAIGNS, score_campaigns, sanitize_campaigns
+from scoring_core import MAX_CAMPAIGNS, MAX_CUSTOMERS_PER_CAMPAIGN, score_campaigns, sanitize_campaigns
 from pilot_journal import PilotJournal
 
 
@@ -38,6 +38,117 @@ JOURNAL = PilotJournal(ROOT / ".local" / "pilot_history.sqlite3")
 MODEL_VERSION = hashlib.sha256(b"".join(
     (ROOT / name).read_bytes() for name in ("agent.py", "environment.py", "mock_environment.py", "scoring_core.py")
 )).hexdigest()[:12]
+
+CAP_LABELS = {
+    "capped_at_campaign_limit": f"Лимит одной кампании: {MAX_CUSTOMERS_PER_CAMPAIGN:,} контактов".replace(",", " "),
+    "capped_at_reach_budget": "Остаток общего лимита контактов",
+    "capped_at_money_budget": "Остаток бюджета платного канала",
+}
+
+
+def resource_breakdown(details, pilot_count):
+    """Account for scored contacts, including repeated contacts and free channels."""
+    def zero():
+        return {"contacts": 0, "cost": 0.0}
+
+    result = {"pilots": zero(), "final": zero(), "total": zero()}
+    channels = {}
+    for index, detail in enumerate(details):
+        phase = "pilots" if index < pilot_count else "final"
+        n, cost = int(detail["n_contacts"]), float(detail["cost"])
+        for totals in (result[phase], result["total"]):
+            totals["contacts"] += n
+            totals["cost"] += cost
+        if n or cost:
+            channel = channels.setdefault(detail["channel"], {
+                "channel": detail["channel"], "pilots": zero(), "final": zero(), "total": zero(),
+            })
+            for totals in (channel[phase], channel["total"]):
+                totals["contacts"] += n
+                totals["cost"] += cost
+    result["channels"] = [channels[name] for name in sorted(channels)]
+    return result
+
+
+def aggregate_report(report):
+    """Allowlisted snapshot: no raw files, customer IDs or temporary upload tokens."""
+    def pick(value, fields):
+        return {field: value[field] for field in fields if field in value}
+
+    campaign_fields = (
+        "rank", "source", "segment", "target", "channel", "contacts", "audience", "cost",
+        "cost_per_contact", "expected_net", "cautious_net", "posterior_lift_pct",
+        "posterior_std_pct", "prior_lift_pct", "pilot_count", "cap_reasons", "channel_scale_from_sms",
+    )
+    return {
+        "schema_version": 1, "provenance": "simulation",
+        "notice": "Локальная симуляция. Не реальные результаты Beeline и не прогноз скрытого судейства. "
+                  "Эффекты кампаний — оценки агента; итог учитывает пилоты и дедупликацию скорером.",
+        "seed": report["seed"], "model_version": report["model_version"],
+        "dataset_fingerprint": report["dataset_fingerprint"],
+        "dataset": pick(report["dataset"], ("kind", "customers", "tariffs", "transitions")),
+        "limits": pick(report["limits"], ("campaigns", "contacts", "budget", "pilots")),
+        "summary": pick(report["summary"], (
+            "campaigns", "contacts", "budget_used", "net_arpu_gain", "pilots", "tested_hypotheses",
+            "unique_customers", "rejected", "potential_sms_cost_avoided",
+        )),
+        "resources": report["resources"],
+        "campaigns": [pick(row, campaign_fields) for row in report["campaigns"]],
+        "pilots": [pick(row, (
+            "sequence", "source", "segment", "target", "channel", "round", "n", "cost",
+            "before_pct", "std_before_pct", "observed_pct", "observation_se_pct", "after_pct",
+            "std_after_pct", "error_pp", "decision",
+        )) for row in report["pilot_trace"]],
+        "rejected": [pick(row, (
+            "source", "segment", "target", "posterior_lift_pct", "posterior_std_pct", "reason",
+            "potential_sms_cost",
+        )) for row in report["rejected"]],
+    }
+
+
+def markdown_report(report):
+    """Readable summary of the same aggregate snapshot, not another agent run."""
+    def label(value):
+        # Names originate in uploaded CSVs: keep them inert in Markdown tables.
+        text = str(value).replace("\r", " ").replace("\n", " ")
+        for character in ("\\", "|", "`", "*", "_", "[", "]", "<", ">"):
+            text = text.replace(character, "\\" + character)
+        return text
+
+    def amount(value):
+        return f"{value:,.0f}".replace(",", " ")
+
+    summary = report["summary"]
+    lines = [
+        "# Beeline Tariff Copilot — отчёт по плану", "", "> " + report["notice"], "",
+        f"Сценарий: {report['seed']} · версия модели: {report['model_version']} · provenance: simulation",
+        f"Источник: {'загруженные данные' if report['dataset']['kind'] == 'upload' else 'данные кейса'}",
+        f"Отпечаток данных: {report['dataset_fingerprint']}", "",
+        f"- Чистый результат локального скорера: {amount(summary['net_arpu_gain'])} у.е.",
+        f"- Кампаний: {summary['campaigns']} / {report['limits']['campaigns']}",
+        f"- Контактов: {amount(summary['contacts'])} / {amount(report['limits']['contacts'])}",
+        f"- Расходы: {amount(summary['budget_used'])} / {amount(report['limits']['budget'])} у.е.",
+        "", "## Ресурсы", "", "| Этап | Контакты | Расходы, у.е. |", "|---|---:|---:|",
+    ]
+    for key, title in (("pilots", "Пилоты"), ("final", "Финальные кампании"), ("total", "Всего")):
+        row = report["resources"][key]
+        lines.append(f"| {title} | {amount(row['contacts'])} | {amount(row['cost'])} |")
+    lines += ["", "### Каналы: пилоты и финальные кампании", "",
+              "| Канал | Контакты | Расходы, у.е. |", "|---|---:|---:|"]
+    for row in report["resources"]["channels"]:
+        lines.append(f"| {label(row['channel'])} | {amount(row['total']['contacts'])} | {amount(row['total']['cost'])} |")
+    lines += ["", "## Кампании", "",
+              "| Переход / сегмент | Канал | Охват | Оценка net | Осторожная оценка | Ограничение охвата |",
+              "|---|---|---:|---:|---:|---|"]
+    for row in report["campaigns"]:
+        route = f"{row['source']} → {row['target']} / {row['segment']}"
+        caps = "; ".join(row["cap_reasons"]) or "Нет"
+        lines.append(f"| {label(route)} | {label(row['channel'])} | {amount(row['contacts'])} | "
+                     f"{amount(row['expected_net'])} | {amount(row['cautious_net'])} | {label(caps)} |")
+    lines += ["", "Оценки кампаний нельзя суммировать как итог скорера: пилоты и пересечения учитываются отдельно.",
+              "Контакты включают повторные обращения; это не число уникальных абонентов. "
+              "Файл не заменяет submission.csv."]
+    return "\n".join(lines) + "\n"
 
 
 def pilot_trace(candidates, pilots, history, final):
@@ -157,6 +268,7 @@ def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
             "rank": index,
             "source": key[0], "segment": key[1], "target": key[2],
             "channel": campaign["channel"],
+            "channel_scale_from_sms": float(factor),
             "name": campaign["campaign_name"],
             "contacts": n, "audience": int(candidate["audience_size"]),
             "cost": cost, "cost_per_contact": float(env.channels[campaign["channel"]]["cost_per_contact"]),
@@ -177,6 +289,7 @@ def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
             "pilot_count": int(candidate["pilot_count"]),
             "pilots": pilot_results.get(key, []),
             "capped": bool(detail["capped_at_campaign_limit"] or detail["capped_at_reach_budget"] or detail["capped_at_money_budget"]),
+            "cap_reasons": [label for flag, label in CAP_LABELS.items() if detail[flag]],
         })
 
     selected = {row["name"] for row in rows}
@@ -204,7 +317,7 @@ def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
             "reason": "После первого пилота μ + 1σ < 0; повторный пилот не проводился.",
         })
 
-    return {
+    report = {
         "mode": "Локальная симуляция · не прогноз результата на скрытом судействе",
         "seed": seed,
         "model_version": MODEL_VERSION,
@@ -229,7 +342,11 @@ def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
         "campaigns": rows,
         "rejected": rejected,
         "submission": final,
+        "resources": resource_breakdown(score["campaigns_detail"], len(pilots)),
     }
+    snapshot = aggregate_report(report)
+    report["exports"] = {"json": snapshot, "markdown": markdown_report(snapshot)}
+    return report
 
 
 class DashboardHandler(BaseHTTPRequestHandler):

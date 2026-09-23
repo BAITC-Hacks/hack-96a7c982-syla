@@ -69,6 +69,17 @@ function renderQuickNav() {
   });
 }
 
+function renderResources() {
+  const resources = report.resources;
+  const labels = {push: 'Push', sms: 'SMS', digital_ads: 'Цифровая реклама', call: 'Звонок'};
+  byId('resource-breakdown').innerHTML = `<div class="resource-phases">${[
+    ['pilots', 'Пилоты'], ['final', 'Финальные кампании'], ['total', 'Всего'],
+  ].map(([key, title]) => `<div class="resource-phase"><span>${title}</span><strong>${number(resources[key].cost)} <small>у.е.</small></strong><small>${number(resources[key].contacts)} контактов</small></div>`).join('')}</div>
+    <div class="resource-channels"><table><caption>Использованные каналы · пилоты и финал</caption><thead><tr><th scope="col">Канал</th><th scope="col">Контакты</th><th scope="col">Расходы, у.е.</th></tr></thead><tbody>${resources.channels.length
+      ? resources.channels.map(row => `<tr><th scope="row">${escapeHtml(labels[row.channel] || row.channel)}</th><td>${number(row.total.contacts)}</td><td>${number(row.total.cost)}</td></tr>`).join('')
+      : '<tr><td colspan="3">Нет использованных каналов</td></tr>'}</tbody></table></div>`;
+}
+
 function renderPortfolio() {
   byId('portfolio-count').textContent = `${report.campaigns.length} / ${report.limits.campaigns}`;
   byId('campaign-list').innerHTML = report.campaigns.map((campaign, index) => `
@@ -120,8 +131,13 @@ function renderInspector() {
       </div>`).join('')
     : '<div class="pilot-row">Группа мала для отдельного пилота; оценка опирается на исторический prior и имеет повышенную неопределённость.</div>';
   const pilotObservation = campaign.pilots.length ? percent(campaign.pilots[0].observed_lift_pct) : 'нет отдельного пилота';
+  const selectedChannel = escapeHtml(({sms: 'SMS', push: 'Push', digital_ads: 'цифровая реклама'})[campaign.channel] || campaign.channel);
+  const smsPosterior = campaign.posterior_lift_pct / campaign.channel_scale_from_sms;
+  const channelTransfer = campaign.channel !== 'sms'
+    ? `SMS → ${selectedChannel}: среднее и σ умножены на ${new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 3}).format(campaign.channel_scale_from_sms)} по коэффициентам среды. Это модельный перенос, а не отдельный пилот выбранного канала.`
+    : '';
   const explanation = campaign.pilot_count
-    ? `Пилот показал ${pilotObservation}. После учёта шума агент оценивает эффект в ${percent(campaign.posterior_lift_pct)} и выбирает кампанию, потому что осторожный чистый эффект остаётся ${signed(campaign.cautious_net)} у.е. после затрат на связь.`
+    ? `Первый SMS-пилот показал ${pilotObservation}. После объединения исторической оценки со всеми пилотами оценка для SMS — ${percent(smsPosterior)}. Для канала «${selectedChannel}» модельная оценка составляет ${percent(campaign.posterior_lift_pct)}. Осторожный чистый эффект остаётся ${signed(campaign.cautious_net)} у.е. после затрат на связь.`
     : `Для группы из ${number(campaign.audience)} человек отдельный пилот не проводился. Агент использовал историческую оценку и добавил группу только при положительном осторожном эффекте.`;
   const context = campaign.tariff_context;
   const priceChange = context.target_price - context.current_price;
@@ -134,15 +150,17 @@ function renderInspector() {
     </div>
     ${campaign.pilot_count ? '' : '<div class="review-alert"><strong>Требует ручной проверки</strong><span>Эта малая группа вошла в план без отдельного пилота. Оценка основана на исторических переходах другой аудитории; перед реальной рассылкой нужен контрольный тест.</span></div>'}
     <div class="decision-flow" aria-label="Путь решения">
-      <div class="flow-step"><span class="flow-index">01 / ДО ПИЛОТА</span><strong>${percent(campaign.prior_lift_pct)}</strong><small>историческая оценка</small></div>
-      <div class="flow-step"><span class="flow-index">02 / НАБЛЮДЕНИЕ</span><strong>${pilotObservation}</strong><small>${campaign.pilot_count ? `${campaign.pilot_count} ${plural(campaign.pilot_count, 'пилот', 'пилота', 'пилотов')} · с шумом` : 'история другой аудитории'}</small></div>
-      <div class="flow-step flow-decision"><span class="flow-index">03 / РЕШЕНИЕ</span><strong>${signed(campaign.cautious_net)}</strong><small>чистый эффект, среднее − 1σ</small></div>
+      <div class="flow-step"><span class="flow-index">01 / ДО ПИЛОТА</span><strong>${percent(campaign.prior_lift_pct)}</strong><small>историческая оценка · ${selectedChannel}</small></div>
+      <div class="flow-step"><span class="flow-index">02 / НАБЛЮДЕНИЕ</span><strong>${pilotObservation}</strong><small>${campaign.pilot_count ? `первый SMS-пилот · всего ${campaign.pilot_count}` : 'история другой аудитории'}</small></div>
+      <div class="flow-step flow-decision"><span class="flow-index">03 / РЕШЕНИЕ</span><strong>${signed(campaign.cautious_net)}</strong><small>${selectedChannel} · чистый эффект, среднее − 1σ</small></div>
     </div>
+    ${channelTransfer ? `<p class="footnote">${channelTransfer}</p>` : ''}
     <div class="detail-grid">
       <div class="detail-cell"><span class="detail-label">Контактов</span><span class="detail-value">${number(campaign.contacts)}</span><span class="detail-sub">из ${number(campaign.audience)} в сегменте</span></div>
       <div class="detail-cell"><span class="detail-label">Затраты</span><span class="detail-value">${number(campaign.cost)} у.е.</span><span class="detail-sub">${number(campaign.cost_per_contact)} у.е. / контакт</span></div>
       <div class="detail-cell"><span class="detail-label">Оценка lift</span><span class="detail-value">${percent(campaign.posterior_lift_pct)}</span><span class="detail-sub">σ модели ${percent(campaign.posterior_std_pct)}</span></div>
     </div>
+    ${campaign.cap_reasons?.length ? `<div class="cap-note"><strong>Почему охват меньше группы</strong><ul>${campaign.cap_reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul></div>` : ''}
     <div class="section-title"><h3>Подходит ли переход клиенту?</h3><span>КОНТЕКСТ, НЕ СКОРИНГ</span></div>
     <div class="context-panel">
       <div class="context-item"><span>Абонплата</span><strong>${number(context.current_price)} → ${number(context.target_price)}</strong><small>${signed(priceChange)} у.е. / мес.</small></div>
@@ -200,7 +218,7 @@ async function loadPlan(seed, datasetId = report?.dataset.id || 'demo') {
     report = await responseJson(response);
     activeIndex = 0;
     byId('seed-input').value = report.seed;
-    renderOverview(); renderQuickNav(); renderPortfolio(); renderInspector();
+    renderOverview(); renderResources(); renderQuickNav(); renderPortfolio(); renderInspector();
     byId('plan-tab').disabled = false;
     showView('plan');
     window.scrollTo({top: 0, behavior: 'instant'});
@@ -247,6 +265,21 @@ byId('download-button').addEventListener('click', async () => {
     byId('message').hidden = false;
   }
 });
+for (const [format, extension, mime] of [
+  ['json', 'json', 'application/json'], ['markdown', 'md', 'text/markdown'],
+]) {
+  byId(`download-report-${format}`).addEventListener('click', () => {
+    if (!report?.exports) return;
+    // Use the snapshot currently on screen, not seed-input or a fresh server run.
+    const contents = format === 'json' ? JSON.stringify(report.exports.json, null, 2) : report.exports.markdown;
+    const url = URL.createObjectURL(new Blob([contents], {type: `${mime};charset=utf-8`}));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `beeline_simulation_seed_${report.seed}.${extension}`;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+}
 const descriptions = {
   profile: 'Кто ваши клиенты: текущий тариф, ARPU и потребление.',
   tariffs: 'Что можно предложить: доступные тарифы, цена и пакет интернета.',
