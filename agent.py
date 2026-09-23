@@ -22,6 +22,24 @@ FINAL_CONTACT_RESERVE = 11_000
 RISK_LAMBDA = 0.75  # risk-adjusted utility: mean - lambda * posterior std
 
 
+
+def _affordable_contacts(budget: float, unit_cost: float, contact_cap: int) -> int:
+    """Return a safe contact count for finite, infinite, NaN, or negative budgets."""
+    if contact_cap <= 0:
+        return 0
+    if unit_cost <= 0:
+        return contact_cap
+    try:
+        budget = float(budget)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if math.isnan(budget) or budget <= 0:
+        return 0
+    if math.isinf(budget):
+        return contact_cap if budget > 0 else 0
+    return max(0, min(contact_cap, int(budget // unit_cost)))
+
+
 def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
     """Estimate coarse transition priors from the supplied *other* population."""
     path = Path(__file__).resolve().parent / "data" / "change_tariff.csv"
@@ -256,7 +274,12 @@ def _explore(env, candidates: list[dict]) -> None:
 
 def _plan(env, candidates: list[dict]) -> list[dict]:
     remaining_contacts = max(0, int(env.remaining_contacts))
-    remaining_budget = max(0.0, float(env.remaining_budget))
+    try:
+        remaining_budget = float(env.remaining_budget)
+    except (TypeError, ValueError, OverflowError):
+        remaining_budget = 0.0
+    if math.isnan(remaining_budget) or remaining_budget < 0:
+        remaining_budget = 0.0
     if remaining_contacts <= 0:
         return []
     chosen_cells = set()
@@ -277,7 +300,9 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
                     continue
                 channel_info = env.channels[channel]
                 unit_cost = channel_info["cost_per_contact"]
-                affordable = remaining_contacts if unit_cost == 0 else int(remaining_budget // unit_cost)
+                affordable = _affordable_contacts(
+                    remaining_budget, unit_cost, remaining_contacts
+                )
                 n = min(candidate["audience_size"], 5000, remaining_contacts, affordable)
                 if n <= 0:
                     continue
