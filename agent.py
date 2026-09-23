@@ -165,6 +165,9 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     actual_size = int(result["n_customers"])
     if not math.isfinite(observed) or actual_size <= 0:
         return False
+    # observed_lift_ratio is measured after the selected channel multiplier.
+    # The environment adds sampling noise with PER_CUSTOMER_STD/sqrt(n), so use
+    # that exact observation scale here (do not rescale by tariff economics).
     precision = actual_size / (PILOT_STD_PER_CUSTOMER ** 2)
     candidate["precision"] += precision
     candidate["weighted_lift"] += observed * precision
@@ -229,10 +232,16 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
                 # Unpiloted small groups need stronger evidence than piloted cells.
                 penalty = 1.0 if not candidate["pilot_count"] else 0.5
                 cautious_net = arpu_sum * (mean - penalty * std) - cost
-                options.append((cautious_net, expected_net, candidate, channel, n, cost))
+                # Prefer value per scarce contact as a tie-breaker, while absolute
+                # cautious net remains the primary objective.
+                cautious_per_contact = cautious_net / max(n, 1)
+                options.append((cautious_net, expected_net, cautious_per_contact,
+                                candidate, channel, n, cost))
         if not options:
             break
-        cautious_net, _, candidate, channel, n, cost = max(options, key=lambda item: (item[0], item[1]))
+        cautious_net, _, _, candidate, channel, n, cost = max(
+            options, key=lambda item: (item[0], item[2], item[1])
+        )
         # Never launch a final campaign whose risk-adjusted value is non-positive.
         # Pilots already count in scoring, so forcing a first bad campaign only burns
         # contacts/budget and can reduce the final result.
