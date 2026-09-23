@@ -464,9 +464,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             csv.writer(stream).writerow(SCHEMAS[kind]["columns"])
             self._reply(stream.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8")
             return
-        if route.path in ("/", "/index.html", "/styles.css", "/app.js", "/history.js"):
+        if route.path in ("/", "/index.html", "/styles.css", "/app.js", "/history.js", "/favicon.svg"):
             name = "index.html" if route.path == "/" else route.path.lstrip("/")
-            mime = {"index.html": "text/html", "styles.css": "text/css", "app.js": "text/javascript", "history.js": "text/javascript"}[name]
+            mime = {"index.html": "text/html", "styles.css": "text/css", "app.js": "text/javascript",
+                    "history.js": "text/javascript", "favicon.svg": "image/svg+xml"}[name]
             self._reply((STATIC / name).read_bytes(), f"{mime}; charset=utf-8")
             return
         if route.path not in ("/api/plan", "/api/submission.csv"):
