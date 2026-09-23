@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#171b1e">
+  <title>Beeline Tariff Copilot · Локальная симуляция</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="masthead">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div>
+          <p class="eyebrow eyebrow-light">BEELINE / MARKETING DECISION DESK</p>
+          <h1>Beeline <span>Tariff Copilot</span></h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <label class="seed-field" for="seed-input">Сценарий <input id="seed-input" type="number" min="0" max="10000" value="42" inputmode="numeric"></label>
+        <button id="generate-button" class="button button-primary" type="button">Сгенерировать план <span aria-hidden="true">↗</span></button>
+        <button id="download-button" class="button button-outline" type="button">Скачать submission.csv <span aria-hidden="true">↓</span></button>
+      </div>
+    </header>
+
+    <main>
+      <div class="simulation-notice" role="note">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span>Демо на синтетических данных · решения не отправляются абонентам</span>
+        <span id="seed-label" class="notice-seed">SEED 42</span>
+      </div>
+
+      <section class="overview" aria-label="Итог плана">
+        <div class="overview-heading">
+          <p class="eyebrow">ГОТОВО К РЕШЕНИЮ</p>
+          <h2 id="plan-heading">План кампаний</h2>
+          <p>Кому предложить новый тариф — и когда лучше не обращаться вовсе.</p>
+        </div>
+        <div class="metrics" id="metrics" aria-live="polite"></div>
+        <div class="outcome" id="outcome" aria-live="polite"></div>
+      </section>
+
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+      <nav class="quick-nav" aria-label="Быстрый выбор кампании">
+        <span class="quick-nav-label">Кампании</span>
+        <div id="quick-campaign-list" class="quick-campaign-list"></div>
+      </nav>
+
+      <div class="workspace-grid">
+        <section class="portfolio-panel panel" aria-labelledby="portfolio-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">ЧТО ЗАПУСКАЕМ</p>
+              <h2 id="portfolio-heading">Кампании</h2>
+            </div>
+            <span id="portfolio-count" class="count-badge">—</span>
+          </div>
+          <p class="panel-intro">Выберите кампанию, чтобы увидеть её пилоты и осторожную оценку.</p>
+          <div id="campaign-list" class="campaign-list" aria-label="Кампании"></div>
+
+          <div class="rejected-heading">
+            <div>
+              <p class="eyebrow">КОГДА НЕ ОБРАЩАТЬСЯ</p>
+              <h3>Не запускать</h3>
+            </div>
+            <span id="rejected-count" class="count-badge count-badge-warm">—</span>
+          </div>
+          <p id="rejected-caption" class="panel-intro"></p>
+          <div id="rejected-list" class="rejected-list"></div>
+        </section>
+
+        <section class="inspector-panel panel" aria-labelledby="inspector-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">ОТ ДАННЫХ К ДЕЙСТВИЮ</p>
+              <h2 id="inspector-heading">Почему именно она?</h2>
+            </div>
+            <span class="inspector-symbol" aria-hidden="true">↗</span>
+          </div>
+          <div id="inspector" class="inspector-body" aria-live="polite">
+            <div class="empty-state">Формируем план и собираем результаты пилотов…</div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="footer-note">
+        <span>BEELINE TARIFF COPILOT / HACKALEM AI</span>
+        <span>Демо не отправляет сообщения абонентам. CSV создаётся для текущего сценария.</span>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
