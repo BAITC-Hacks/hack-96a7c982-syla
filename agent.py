@@ -112,6 +112,9 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
                 "arpu_sum": arpu_sum,
                 "arpu_prefix": arpu_prefix,
                 "prior_lift_ratio": prior_mean,
+                "historical_conversion": (
+                    float(entry[1]) if entry is not None else float(fallback_conversion)
+                ),
                 "precision": 1.0 / (PRIOR_STD ** 2),
                 "weighted_lift": prior_mean / (PRIOR_STD ** 2),
                 "pilot_count": 0,
@@ -260,7 +263,15 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
                 # The final campaign has no n_customers parameter. The scorer
                 # takes this exact ID-sorted prefix when a limit truncates it.
                 arpu_sum = float(candidate["arpu_prefix"][n - 1])
-                factor = channel_info["conversion_multiplier"] / env.channels["sms"]["conversion_multiplier"]
+                # Conversion is capped at 1.0. A naive multiplier ratio can
+                # overstate digital/call when the underlying conversion is already high.
+                hist_conv = max(float(candidate.get("historical_conversion", 0.0)), 0.0)
+                sms_eff = min(hist_conv * env.channels["sms"]["conversion_multiplier"], 1.0)
+                ch_eff = min(hist_conv * channel_info["conversion_multiplier"], 1.0)
+                if sms_eff > 1e-9:
+                    factor = ch_eff / sms_eff
+                else:
+                    factor = channel_info["conversion_multiplier"] / env.channels["sms"]["conversion_multiplier"]
                 mean = mean_sms * factor
                 std = std_sms * factor
                 cost = n * unit_cost
