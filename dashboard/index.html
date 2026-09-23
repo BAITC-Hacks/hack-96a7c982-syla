@@ -18,7 +18,7 @@
           <h1>Beeline <span>Tariff Copilot</span></h1>
         </div>
       </div>
-      <div class="header-actions">
+      <div class="header-actions" id="plan-actions" hidden>
         <label class="seed-field" for="seed-input">Сценарий <input id="seed-input" type="number" min="0" max="10000" value="42" inputmode="numeric"></label>
         <button id="generate-button" class="button button-primary" type="button">Сгенерировать план <span aria-hidden="true">↗</span></button>
         <button id="download-button" class="button button-outline" type="button">Скачать submission.csv <span aria-hidden="true">↓</span></button>
@@ -26,11 +26,38 @@
     </header>
 
     <main>
+      <nav class="view-tabs" aria-label="Разделы приложения">
+        <button id="data-tab" class="view-tab active" type="button" aria-pressed="true">01 <span>Данные</span></button>
+        <button id="plan-tab" class="view-tab" type="button" aria-pressed="false" disabled>02 <span>План кампаний</span></button>
+        <span class="local-label">Локальное рабочее пространство</span>
+      </nav>
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+      <section id="data-view" aria-labelledby="data-heading">
+        <div class="data-heading">
+          <div><p class="eyebrow">ИЗ БАЗЫ АБОНЕНТОВ — В ПЛАН КАМПАНИЙ</p>
+            <h2 id="data-heading">Сначала — ваши данные.</h2>
+            <p>Загрузите три файла. Проверим совместимость и рассчитаем кампании для вашей аудитории.</p></div>
+          <button id="demo-button" class="button button-light" type="button">Посмотреть на данных кейса <span aria-hidden="true">↗</span></button>
+        </div>
+        <form id="upload-form">
+          <div id="upload-cards" class="upload-grid"><p>Загружаем требования к файлам…</p></div>
+          <div class="upload-toolbar">
+            <div><strong>CSV · UTF-8 · запятая или точка с запятой</strong><p>До 15 МБ на файл и 30 МБ вместе. Числа — с десятичной точкой.</p></div>
+            <button id="validate-button" class="button button-primary" type="submit" disabled>Проверить файлы <span aria-hidden="true">→</span></button>
+          </div>
+        </form>
+        <div id="validation-result" class="validation-result" role="status" aria-live="polite" hidden></div>
+        <div class="data-mode-note"><span class="mode-symbol" aria-hidden="true">↳</span><div><strong>Что произойдёт после загрузки</strong><p>Приложение построит симуляцию на вашей истории переходов. Пилоты будут смоделированы, а результат покажет оценку в этом сценарии. Для оценки реального отклика понадобятся результаты тестовых рассылок.</p><p class="storage-note">Файлы обрабатываются локально. В памяти сервера остаются четыре последних набора; после перезапуска их нужно загрузить заново. Исходные файлы не изменяются.</p></div></div>
+      </section>
+
+      <section id="plan-view" aria-label="План кампаний" hidden>
       <div class="simulation-notice" role="note">
         <span class="live-dot" aria-hidden="true"></span>
-        <span>Демо на синтетических данных · решения не отправляются абонентам</span>
+        <span id="mode-label">Демо на синтетических данных · решения не отправляются абонентам</span>
         <span id="seed-label" class="notice-seed">SEED 42</span>
       </div>
+      <div class="source-bar"><span id="source-label"></span><button id="change-data-button" type="button">Изменить данные ↗</button></div>
 
       <section class="overview" aria-label="Итог плана">
         <div class="overview-heading">
@@ -41,8 +68,6 @@
         <div class="metrics" id="metrics" aria-live="polite"></div>
         <div class="outcome" id="outcome" aria-live="polite"></div>
       </section>
-
-      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
 
       <nav class="quick-nav" aria-label="Быстрый выбор кампании">
         <span class="quick-nav-label">Кампании</span>
@@ -85,6 +110,7 @@
           </div>
         </section>
       </div>
+      </section>
 
       <footer class="footer-note">
         <span>BEELINE TARIFF COPILOT / HACKALEM AI</span>

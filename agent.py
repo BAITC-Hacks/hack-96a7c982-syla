@@ -23,13 +23,13 @@ TARGET_PROMISING_CANDIDATES = 11
 PILOTED_RISK_PENALTY = 1.0
 
 
-def _historical_priors(tariffs: pd.DataFrame) -> tuple[dict, float]:
+def _historical_priors(tariffs: pd.DataFrame, history=None) -> tuple[dict, float]:
     """Estimate coarse transition priors from the supplied *other* population."""
     path = Path(__file__).resolve().parent / "data" / "change_tariff.csv"
-    if not path.exists():
-        return {}, 0.10
-
-    history = pd.read_csv(path)
+    if history is None:
+        if not path.exists():
+            return {}, 0.10
+        history = pd.read_csv(path)
     history = history.loc[history["AVG_ARPU_PREV_3M"] >= 100].copy()
     history["arpu_segment"] = pd.cut(
         history["AVG_ARPU_PREV_3M"],

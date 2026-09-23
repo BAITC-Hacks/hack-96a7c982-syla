@@ -18,11 +18,12 @@ from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 
-from agent import PILOT_STD_PER_CUSTOMER, PILOTED_RISK_PENALTY, _candidates, _explore, _plan, _posterior
+from agent import PILOT_STD_PER_CUSTOMER, PILOTED_RISK_PENALTY, _candidates, _explore, _historical_priors, _plan, _posterior
+from dashboard_data import MAX_UPLOAD_BYTES, SCHEMAS, UPLOADS, DatasetError, demo_dataset, validate_upload
+from environment import make_environment
 from make_submission import CAMPAIGN_COLUMNS
 from mock_environment import (
-    MAX_TOTAL_CONTACTS, TOTAL_BUDGET, _mock_fallback, _mock_impact_model,
-    make_mock_env,
+    CHANNELS, MAX_TOTAL_CONTACTS, TOTAL_BUDGET, _mock_fallback, _mock_impact_model,
 )
 from scoring_core import MAX_CAMPAIGNS, score_campaigns, sanitize_campaigns
 
@@ -32,10 +33,18 @@ STATIC = ROOT / "dashboard"
 
 
 @lru_cache(maxsize=8)
-def build_dashboard(seed: int = 42) -> dict:
+def build_dashboard(seed: int = 42, dataset_id: str = "demo") -> dict:
     """Run the exact baseline decision pipeline and return display diagnostics."""
-    env, internals = make_mock_env(seed=seed)
-    pilot_candidates, small_candidates = _candidates(env)
+    dataset = demo_dataset() if dataset_id == "demo" else UPLOADS.get(dataset_id)
+    mock_model = _mock_impact_model(dataset.history)
+    env, internals = make_environment(
+        customer_profile=dataset.profile, impact_model=mock_model, dict_tariff=dataset.tariffs,
+        channels=CHANNELS, total_budget=TOTAL_BUDGET, max_total_contacts=MAX_TOTAL_CONTACTS,
+        fallback_predict=_mock_fallback, seed=seed,
+    )
+    pilot_candidates, small_candidates = _candidates(
+        env, prior_provider=lambda tariffs: _historical_priors(tariffs, dataset.history),
+    )
     _explore(env, pilot_candidates)
     candidates = pilot_candidates + small_candidates
     final = sanitize_campaigns(_plan(env, candidates), env.tariffs)[:MAX_CAMPAIGNS]
@@ -48,7 +57,6 @@ def build_dashboard(seed: int = 42) -> dict:
     ):
         if column not in all_campaigns:
             all_campaigns[column] = None
-    mock_model = _mock_impact_model(pd.read_csv(ROOT / "data" / "change_tariff.csv"))
     score = score_campaigns(
         all_campaigns, env.customer_profile, mock_model, env.tariffs,
         float(env.customer_profile["predicted_arpu"].sum()), _mock_fallback,
@@ -97,7 +105,8 @@ def build_dashboard(seed: int = 42) -> dict:
             (env.customer_profile["current_tariff"] == key[0])
             & (env.customer_profile["arpu_segment"] == key[1])
         ]
-        data_volume = pd.to_numeric(members["DATA_VOLUME"], errors="coerce")
+        data_volume = pd.to_numeric(members["DATA_VOLUME"], errors="coerce").dropna()
+        data_segments = members.loc[members["data_segment"].isin(["NON_USER", "LITE", "HEAVY"]), "data_segment"]
         rows.append({
             "rank": index,
             "source": key[0], "segment": key[1], "target": key[2],
@@ -115,8 +124,9 @@ def build_dashboard(seed: int = 42) -> dict:
                 "target_price": float(tariff_detail.loc[key[2], "price_tariff"]),
                 "current_data_gb": float(tariff_detail.loc[key[0], "Data_in_PKG"]) / 1024,
                 "target_data_gb": float(tariff_detail.loc[key[2], "Data_in_PKG"]) / 1024,
-                "data_user_pct": 100 * float((data_volume > 0).mean()),
-                "heavy_user_pct": 100 * float((members["data_segment"] == "HEAVY").mean()),
+                "data_user_pct": 100 * float((data_volume > 0).mean()) if len(data_volume) else None,
+                "heavy_user_pct": 100 * float((data_segments == "HEAVY").mean()) if len(data_segments) else None,
+                "data_known_count": len(data_volume),
             },
             "pilot_count": int(candidate["pilot_count"]),
             "pilots": pilot_results.get(key, []),
@@ -151,6 +161,7 @@ def build_dashboard(seed: int = 42) -> dict:
     return {
         "mode": "Локальная симуляция · не прогноз результата на скрытом судействе",
         "seed": seed,
+        "dataset": dataset.metadata,
         "limits": {
             "campaigns": MAX_CAMPAIGNS, "contacts": MAX_TOTAL_CONTACTS,
             "budget": TOTAL_BUDGET, "pilots": 20,
@@ -173,6 +184,10 @@ def build_dashboard(seed: int = 42) -> dict:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def _json(self, value, status=200):
+        self._reply(json.dumps(value, ensure_ascii=False, allow_nan=False).encode(),
+                    "application/json; charset=utf-8", status)
+
     def _reply(self, body: bytes, content_type: str, status: int = 200) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -183,6 +198,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         route = urlsplit(self.path)
+        if route.path == "/api/data-schema":
+            self._json(SCHEMAS)
+            return
+        if route.path == "/api/template.csv":
+            kind = parse_qs(route.query).get("kind", [""])[0]
+            if kind not in SCHEMAS:
+                self._json({"error": "Неизвестный тип файла."}, 400)
+                return
+            stream = io.StringIO()
+            csv.writer(stream).writerow(SCHEMAS[kind]["columns"])
+            self._reply(stream.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8")
+            return
         if route.path in ("/", "/index.html", "/styles.css", "/app.js"):
             name = "index.html" if route.path == "/" else route.path.lstrip("/")
             mime = {"index.html": "text/html", "styles.css": "text/css", "app.js": "text/javascript"}[name]
@@ -192,15 +219,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._reply(b"Not found", "text/plain", 404)
             return
         try:
-            seed = int(parse_qs(route.query).get("seed", ["42"])[0])
+            query = parse_qs(route.query)
+            seed = int(query.get("seed", ["42"])[0])
             if not 0 <= seed <= 10000:
-                raise ValueError("seed out of range")
-            report = build_dashboard(seed)
+                raise ValueError("Номер сценария должен быть от 0 до 10 000.")
+            dataset_id = query.get("dataset", ["demo"])[0]
+            if dataset_id != "demo":
+                UPLOADS.get(dataset_id)  # Check expiry even when a report is cached.
+            report = build_dashboard(seed, dataset_id)
+        except KeyError:
+            self._json({"error": "Данные больше не доступны. Загрузите файлы заново."}, 404)
+            return
         except (ValueError, TypeError) as exc:
-            self._reply(str(exc).encode(), "text/plain; charset=utf-8", 400)
+            self._json({"error": str(exc)}, 400)
             return
         if route.path == "/api/plan":
-            self._reply(json.dumps(report, ensure_ascii=False, allow_nan=False).encode(), "application/json; charset=utf-8")
+            self._json(report)
         else:
             stream = io.StringIO()
             writer = csv.DictWriter(stream, fieldnames=CAMPAIGN_COLUMNS)
@@ -208,6 +242,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
             for campaign in report["submission"]:
                 writer.writerow({key: campaign.get(key, "") for key in CAMPAIGN_COLUMNS})
             self._reply(stream.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8")
+
+    def do_POST(self) -> None:
+        if urlsplit(self.path).path != "/api/datasets":
+            self._json({"error": "Страница не найдена."}, 404)
+            return
+        origin = self.headers.get("Origin")
+        port = self.server.server_address[1]
+        if origin and origin not in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}:
+            self._json({"error": "Откройте загрузку в локальном приложении."}, 403)
+            return
+        if self.headers.get_content_type() != "application/json":
+            self._json({"error": "Ожидается JSON с CSV-файлами."}, 415)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= MAX_UPLOAD_BYTES:
+                self._json({"error": "Общий размер загрузки превышен. Используйте файлы до 15 МБ каждый и до 30 МБ вместе."}, 413)
+                return
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            dataset = validate_upload(payload)
+        except DatasetError as exc:
+            self._json({"error": str(exc), "issues": exc.issues}, 422)
+            return
+        except (UnicodeDecodeError, ValueError):
+            self._json({"error": "Не удалось прочитать загрузку. Выберите CSV в UTF-8 и повторите."}, 400)
+            return
+        self._json(UPLOADS.add(dataset), 201)
 
 
 def main() -> None:
