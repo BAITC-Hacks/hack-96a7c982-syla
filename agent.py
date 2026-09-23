@@ -183,7 +183,10 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     if env.pilots_left <= 0:
         return False
     size = min(requested_size, candidate["audience_size"])
-    cost = size * env.channels["sms"]["cost_per_contact"]
+    pilot_channel = "sms" if "sms" in env.channels else min(
+        env.channels, key=lambda ch: env.channels[ch]["cost_per_contact"]
+    )
+    cost = size * env.channels[pilot_channel]["cost_per_contact"]
     if size < 10 or env.remaining_contacts - size < FINAL_CONTACT_RESERVE:
         return False
     if env.remaining_budget < cost:
@@ -191,15 +194,18 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     try:
         result = env.run_pilot(
             target_tariff=candidate["target_tariff"],
-            channel="sms",
+            channel=pilot_channel,
             n_customers=size,
             filter_current_tariff=candidate["filter_current_tariff"],
             filter_arpu_segment=candidate["filter_arpu_segment"],
         )
     except (RuntimeError, ValueError):
         return False
-    observed = float(result["observed_lift_ratio"])
-    actual_size = int(result["n_customers"])
+    try:
+        observed = float(result["observed_lift_ratio"])
+        actual_size = int(result["n_customers"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
     if not math.isfinite(observed) or actual_size <= 0:
         return False
     # observed_lift_ratio is measured after the selected channel multiplier.
