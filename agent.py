@@ -118,6 +118,7 @@ def _candidates(env) -> tuple[list[dict], list[dict]]:
                 "precision": 1.0 / (PRIOR_STD ** 2),
                 "weighted_lift": prior_mean / (PRIOR_STD ** 2),
                 "pilot_count": 0,
+                "is_rejected": False,
                 "rank": rank,
             })
 
@@ -180,7 +181,7 @@ def _posterior(candidate: dict) -> tuple[float, float]:
 
 
 def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
-    if env.pilots_left <= 0:
+    if env.pilots_left <= 0 or candidate.get("is_rejected", False):
         return False
     size = min(requested_size, candidate["audience_size"])
     pilot_channel = "sms" if "sms" in env.channels else min(
@@ -215,6 +216,9 @@ def _run_pilot(env, candidate: dict, requested_size: int) -> bool:
     candidate["precision"] += precision
     candidate["weighted_lift"] += observed * precision
     candidate["pilot_count"] += 1
+    mean, std = _posterior(candidate)
+    if mean + std < 0.0:
+        candidate["is_rejected"] = True
     return True
 
 
@@ -255,6 +259,10 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
     while len(campaigns) < 10 and remaining_contacts > 0:
         options = []
         for candidate in candidates:
+            if (candidate.get("is_rejected", False)
+                    or (candidate["pilot_count"] == 0
+                        and candidate["audience_size"] >= INITIAL_PILOT_SIZE)):
+                continue
             cell = (candidate["filter_current_tariff"], candidate["filter_arpu_segment"])
             if cell in chosen_cells:
                 continue
