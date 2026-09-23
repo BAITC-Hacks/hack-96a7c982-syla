@@ -25,3 +25,32 @@ python -m unittest discover -s tests
 5. При свободных слотах может добрать небольшие группы без отдельного пилота, только если осторожная оценка по историческому prior положительна.
 
 Оценка `local_eval.py` показывает работу на мок-среде, **не прогноз балла на скрытом судействе**. Первая версия использует только ARPU-сегмент и текущий тариф; сегменты трафика и звонков, другие каналы и более адаптивная разведка остаются направлениями для следующего этапа. Небольшие группы без пилота особенно чувствительны к расхождению истории и скрытой аудитории.
+
+
+## Experiment verification
+
+The `experiment` branch contains the risk-aware agent. Before merging, run:
+
+```bash
+make verify
+make benchmark
+```
+
+`make verify` runs the unit/anomaly matrix, a 10-seed local evaluation, regenerates
+the pitch report, and rebuilds `submission.csv`. `make benchmark` compares the
+checked-out experiment agent with `main` on identical seeds.
+
+### Decision logic
+
+The agent treats historical transitions as a weak prior and pilot observations as
+noisy evidence. Posterior evidence is weighted by pilot sample size
+(`precision = n / 0.804²`). Final campaigns maximize risk-adjusted value using
+`mean - λ·std` with λ=0.75 and switch toward value-per-contact as the 15,000
+contact limit becomes scarce. Large unpiloted hypotheses and confidently negative
+hypotheses are not launched.
+
+### Pitch artifacts
+
+`python pitch_report.py` regenerates `PITCH_REPORT.json` and `SUMMARY.md`.
+These include net lift, ROI, risk, campaign-level 95% confidence intervals,
+effective pilot sample sizes, and recommendation explanations.
