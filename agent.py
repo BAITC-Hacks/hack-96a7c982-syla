@@ -335,8 +335,17 @@ def _plan(env, candidates: list[dict]) -> list[dict]:
                                 candidate, channel, n, cost))
         if not options:
             break
+        # Bounded-knapsack heuristic: early on favor total value; as contacts become
+        # scarce, increasingly favor risk-adjusted value per contact to avoid a large
+        # mediocre segment crowding out several small high-return cells.
+        scarcity = 1.0 - min(1.0, remaining_contacts / max(float(env.remaining_contacts), 1.0))
         cautious_net, _, _, candidate, channel, n, cost = max(
-            options, key=lambda item: (item[0], item[2], item[1])
+            options,
+            key=lambda item: (
+                (1.0 - scarcity) * item[0]
+                + scarcity * item[2] * min(remaining_contacts, 5000),
+                item[2], item[1],
+            ),
         )
         # Never launch a final campaign whose risk-adjusted value is non-positive.
         # Pilots already count in scoring, so forcing a first bad campaign only burns
