@@ -262,6 +262,7 @@ def _followup_value(env, candidate: dict) -> float:
 def _explore(env, candidates: list[dict]) -> None:
     promising = 0
     for candidate in candidates:
+        # Keep the last pilot slots available for targeted follow-up tests.
         if (promising >= TARGET_PROMISING_CANDIDATES
                 or env.pilots_left <= FOLLOWUP_PILOTS):
             break
