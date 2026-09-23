@@ -318,3 +318,4 @@ python compare_agents.py
 
 <!-- Hackathon finalization checkpoint: UI and agent candidates are validated in isolated branches before final integration. -->
 <!-- Final demo note: synthetic evaluation results should be presented as simulation metrics, not production Beeline KPIs. -->
+<!-- Submission safety: final campaign limits and generated CSV should be rechecked immediately before upload. -->
